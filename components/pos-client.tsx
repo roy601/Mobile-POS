@@ -1,0 +1,521 @@
+"use client"
+
+import { useState } from "react"
+import { Calculator, CreditCard, Receipt, QrCode, User, Trash2, Plus, Minus } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { POSCalculator } from "@/components/pos-calculator"
+import { CustomerSearch } from "@/components/customer-search"
+import { ProductScanner } from "@/components/product-scanner"
+
+type CartItem = {
+  id: string
+  name: string
+  model: string
+  color: string
+  quantity: number
+  price: number
+  discount: number
+}
+
+type Customer = {
+  name: string
+  phone: string
+  email: string
+  dues: number
+}
+
+export function POSClient() {
+  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [productForm, setProductForm] = useState({
+    barcode: "",
+    name: "",
+    color: "",
+    quantity: 1,
+    price: 0,
+    discount: 0,
+  })
+  const [paymentForm, setPaymentForm] = useState({
+    method: "",
+    cashReceived: 0,
+    bankingReceived: 0,
+  })
+  const [showCalculator, setShowCalculator] = useState(false)
+  const [showCustomerSearch, setShowCustomerSearch] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
+
+  // Calculate totals
+  const subtotal = cartItems.reduce((sum, item) => sum + item.quantity * item.price, 0)
+  const totalDiscount = cartItems.reduce((sum, item) => sum + (item.quantity * item.price * item.discount) / 100, 0)
+  const taxRate = 8
+  const taxAmount = ((subtotal - totalDiscount) * taxRate) / 100
+  const total = subtotal - totalDiscount + taxAmount + (customer?.dues || 0)
+  const totalReceived = paymentForm.cashReceived + paymentForm.bankingReceived
+  const change = totalReceived - total
+
+  const addToCart = () => {
+    if (!productForm.name || productForm.price <= 0) return
+
+    const newItem: CartItem = {
+      id: Date.now().toString(),
+      name: productForm.name,
+      model: productForm.barcode,
+      color: productForm.color,
+      quantity: productForm.quantity,
+      price: productForm.price,
+      discount: productForm.discount,
+    }
+
+    setCartItems([...cartItems, newItem])
+    setProductForm({
+      barcode: "",
+      name: "",
+      color: "",
+      quantity: 1,
+      price: 0,
+      discount: 0,
+    })
+  }
+
+  const removeFromCart = (id: string) => {
+    setCartItems(cartItems.filter((item) => item.id !== id))
+  }
+
+  const updateQuantity = (id: string, newQuantity: number) => {
+    if (newQuantity <= 0) {
+      removeFromCart(id)
+      return
+    }
+    setCartItems(cartItems.map((item) => (item.id === id ? { ...item, quantity: newQuantity } : item)))
+  }
+
+  const clearCart = () => {
+    setCartItems([])
+    setCustomer(null)
+    setPaymentForm({
+      method: "",
+      cashReceived: 0,
+      bankingReceived: 0,
+    })
+  }
+
+  const completeSale = () => {
+    if (cartItems.length === 0) return
+    // Here you would process the sale
+    alert("Sale completed successfully!")
+    clearCart()
+  }
+
+  const holdSale = () => {
+    if (cartItems.length === 0) return
+    // Here you would save the sale for later
+    alert("Sale held successfully!")
+  }
+
+  const printReceipt = () => {
+    // Here you would print the receipt
+    alert("Receipt printed!")
+  }
+
+  return (
+    <div className="flex-1 p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Point of Sale</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={printReceipt}>
+            <Receipt className="mr-2 h-4 w-4" />
+            Last Receipt
+          </Button>
+          <Button variant="outline" onClick={() => setShowCalculator(true)}>
+            <Calculator className="mr-2 h-4 w-4" />
+            Calculator
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Customer Information */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <User className="mr-2 h-5 w-5" />
+              Customer Information
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {customer ? (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-medium">{customer.name}</p>
+                    <p className="text-sm text-muted-foreground">{customer.phone}</p>
+                    <p className="text-sm text-muted-foreground">{customer.email}</p>
+                    {customer.dues > 0 && (
+                      <p className="text-sm text-red-600">Previous Dues: ৳{customer.dues.toFixed(2)}</p>
+                    )}
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setCustomer(null)}>
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="customer-name">Customer Name</Label>
+                  <Input id="customer-name" placeholder="Enter customer name" />
+                </div>
+                <div>
+                  <Label htmlFor="customer-phone">Phone Number</Label>
+                  <Input id="customer-phone" placeholder="Enter phone number" />
+                </div>
+                <div>
+                  <Label htmlFor="customer-email">Email Address</Label>
+                  <Input id="customer-email" type="email" placeholder="Enter email address" />
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1">
+                    Save Customer
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowCustomerSearch(true)}>
+                    Search
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Product Entry */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Product Entry</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Label htmlFor="barcode">Barcode/Model</Label>
+                <Input
+                  id="barcode"
+                  placeholder="Scan or enter barcode"
+                  value={productForm.barcode}
+                  onChange={(e) => setProductForm({ ...productForm, barcode: e.target.value })}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button size="icon" onClick={() => setShowScanner(true)}>
+                  <QrCode className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="product-name">Product Name</Label>
+              <Input
+                id="product-name"
+                placeholder="Enter product name"
+                value={productForm.name}
+                onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="color">Color</Label>
+                <Select
+                  value={productForm.color}
+                  onValueChange={(value) => setProductForm({ ...productForm, color: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select color" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="black">Black</SelectItem>
+                    <SelectItem value="white">White</SelectItem>
+                    <SelectItem value="blue">Blue</SelectItem>
+                    <SelectItem value="red">Red</SelectItem>
+                    <SelectItem value="gold">Gold</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="quantity">Quantity</Label>
+                <div className="flex items-center">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    onClick={() => setProductForm({ ...productForm, quantity: Math.max(1, productForm.quantity - 1) })}
+                  >
+                    <Minus className="h-4 w-4" />
+                  </Button>
+                  <Input
+                    className="text-center mx-1"
+                    value={productForm.quantity}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, quantity: Math.max(1, Number.parseInt(e.target.value) || 1) })
+                    }
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    onClick={() => setProductForm({ ...productForm, quantity: productForm.quantity + 1 })}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="sale-price">Sale Price</Label>
+                <Input
+                  id="sale-price"
+                  type="number"
+                  placeholder="0.00"
+                  value={productForm.price}
+                  onChange={(e) => setProductForm({ ...productForm, price: Number.parseFloat(e.target.value) || 0 })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="discount">Discount (%)</Label>
+                <Input
+                  id="discount"
+                  type="number"
+                  placeholder="0"
+                  value={productForm.discount}
+                  onChange={(e) => setProductForm({ ...productForm, discount: Number.parseFloat(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            <Button className="w-full bg-green-600 hover:bg-green-700" onClick={addToCart}>
+              Add to Cart
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Cart & Payment */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Cart & Payment</CardTitle>
+              {cartItems.length > 0 && (
+                <Button variant="outline" size="sm" onClick={clearCart}>
+                  Clear All
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Cart Items */}
+            <div className="border rounded-lg p-3 max-h-48 overflow-y-auto">
+              <div className="space-y-2">
+                {cartItems.length > 0 ? (
+                  cartItems.map((item) => (
+                    <div key={item.id} className="flex justify-between items-center text-sm border-b pb-2">
+                      <div className="flex-1">
+                        <p className="font-medium">
+                          {item.name} - {item.color}
+                        </p>
+                        <p className="text-muted-foreground">
+                          ৳{item.price.toFixed(2)} × {item.quantity}
+                          {item.discount > 0 && ` (-${item.discount}%)`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="w-8 text-center">{item.quantity}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-red-500"
+                          onClick={() => removeFromCart(item.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-muted-foreground py-4">No items in cart</p>
+                )}
+              </div>
+            </div>
+
+            {/* Totals */}
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>Subtotal:</span>
+                <span>৳{subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Discount:</span>
+                <span>-৳{totalDiscount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Tax ({taxRate}%):</span>
+                <span>৳{taxAmount.toFixed(2)}</span>
+              </div>
+              {customer?.dues && customer.dues > 0 && (
+                <div className="flex justify-between text-red-600">
+                  <span>Previous Dues:</span>
+                  <span>৳{customer.dues.toFixed(2)}</span>
+                </div>
+              )}
+              <Separator />
+              <div className="flex justify-between font-bold text-lg">
+                <span>Total:</span>
+                <span>৳{total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Payment Method */}
+            <div>
+              <Label>Payment Method</Label>
+              <Select
+                value={paymentForm.method}
+                onValueChange={(value) => setPaymentForm({ ...paymentForm, method: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="card">Credit/Debit Card</SelectItem>
+                  <SelectItem value="mobile-banking">Mobile Banking</SelectItem>
+                  <SelectItem value="bank-transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="split">Split Payment</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Amount Received */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="cash-received">Cash Received</Label>
+                <Input
+                  id="cash-received"
+                  type="number"
+                  placeholder="0.00"
+                  value={paymentForm.cashReceived}
+                  onChange={(e) =>
+                    setPaymentForm({ ...paymentForm, cashReceived: Number.parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor="banking-received">Banking Received</Label>
+                <Input
+                  id="banking-received"
+                  type="number"
+                  placeholder="0.00"
+                  value={paymentForm.bankingReceived}
+                  onChange={(e) =>
+                    setPaymentForm({ ...paymentForm, bankingReceived: Number.parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Change */}
+            <div className="bg-muted p-3 rounded-lg">
+              <div className="flex justify-between font-bold">
+                <span>Change to Return:</span>
+                <span className={change >= 0 ? "text-green-600" : "text-red-600"}>৳{change.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2">
+              <Button
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                size="lg"
+                onClick={completeSale}
+                disabled={cartItems.length === 0 || totalReceived < total}
+              >
+                <CreditCard className="mr-2 h-5 w-5" />
+                Complete Sale
+              </Button>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" onClick={holdSale} disabled={cartItems.length === 0}>
+                  Hold Sale
+                </Button>
+                <Button variant="outline" onClick={printReceipt}>
+                  Print Receipt
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick Actions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Button variant="outline" className="h-16" onClick={clearCart}>
+              <div className="text-center">
+                <Receipt className="h-6 w-6 mx-auto mb-1" />
+                <span className="text-sm">New Sale</span>
+              </div>
+            </Button>
+            <Button variant="outline" className="h-16" onClick={() => setShowCalculator(true)}>
+              <div className="text-center">
+                <Calculator className="h-6 w-6 mx-auto mb-1" />
+                <span className="text-sm">Calculator</span>
+              </div>
+            </Button>
+            <Button variant="outline" className="h-16" onClick={() => setShowCustomerSearch(true)}>
+              <div className="text-center">
+                <User className="h-6 w-6 mx-auto mb-1" />
+                <span className="text-sm">Customer List</span>
+              </div>
+            </Button>
+            <Button variant="outline" className="h-16" onClick={() => setShowScanner(true)}>
+              <div className="text-center">
+                <QrCode className="h-6 w-6 mx-auto mb-1" />
+                <span className="text-sm">Scan Product</span>
+              </div>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Dialogs */}
+      <POSCalculator open={showCalculator} onOpenChange={setShowCalculator} />
+      <CustomerSearch open={showCustomerSearch} onOpenChange={setShowCustomerSearch} onSelectCustomer={setCustomer} />
+      <ProductScanner
+        open={showScanner}
+        onOpenChange={setShowScanner}
+        onScanResult={(result) => setProductForm({ ...productForm, barcode: result })}
+      />
+    </div>
+  )
+}
