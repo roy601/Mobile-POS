@@ -1,5 +1,4 @@
 import type { Metadata } from "next"
-import Link from "next/link"
 import { DollarSign, Package, ShoppingCart, Users } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -10,6 +9,7 @@ import { Overview } from "@/components/overview"
 import { RecentSales } from "@/components/recent-sales"
 import { Search } from "@/components/search"
 import { UserNav } from "@/components/user-nav"
+import { SyncStatus } from "@/components/sync-status"
 
 export const metadata: Metadata = {
   title: "MobilePOS Dashboard",
@@ -38,9 +38,7 @@ export default function DashboardPage() {
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="inventory">Inventory</TabsTrigger>
-            <TabsTrigger value="customers">Customers</TabsTrigger>
-            <TabsTrigger value="orders">Orders</TabsTrigger>
+            <TabsTrigger value="sync">Data Sync</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -105,65 +103,43 @@ export default function DashboardPage() {
               </Card>
             </div>
           </TabsContent>
-          <TabsContent value="inventory" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Inventory Management</CardTitle>
-                <CardDescription>Manage your inventory across multiple locations.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-10">
-                  <p className="text-muted-foreground">
-                    Click on "Inventory" in the main navigation to access the full inventory management system.
-                  </p>
-                  <div className="mt-4">
-                    <Link href="/inventory">
-                      <Button>Go to Inventory</Button>
-                    </Link>
+          <TabsContent value="sync" className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
+              <SyncStatus />
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sync Information</CardTitle>
+                  <CardDescription>How data synchronization works</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Offline-First Design</h4>
+                    <p className="text-sm text-muted-foreground">
+                      All data is stored locally on your device first, ensuring the POS works even without internet
+                      connection.
+                    </p>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          <TabsContent value="customers" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Customer Accounts</CardTitle>
-                <CardDescription>Manage customer information and purchase history.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-10">
-                  <p className="text-muted-foreground">
-                    Click on "Customers" in the main navigation to access the customer management system.
-                  </p>
-                  <div className="mt-4">
-                    <Link href="/customers">
-                      <Button>Go to Customers</Button>
-                    </Link>
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Automatic Sync</h4>
+                    <p className="text-sm text-muted-foreground">
+                      When you click sync, all unsynced data will be uploaded to the cloud database for backup and
+                      multi-device access.
+                    </p>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          <TabsContent value="orders" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Order Management</CardTitle>
-                <CardDescription>Track and manage all orders across channels.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-10">
-                  <p className="text-muted-foreground">
-                    Click on "Orders" in the main navigation to access the order management system.
-                  </p>
-                  <div className="mt-4">
-                    <Link href="/orders">
-                      <Button>Go to Orders</Button>
-                    </Link>
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Data Types Synced</h4>
+                    <ul className="text-sm text-muted-foreground list-disc list-inside space-y-1">
+                      <li>Products and inventory</li>
+                      <li>Customer information</li>
+                      <li>Sales transactions</li>
+                      <li>Purchase records</li>
+                      <li>Returns and refunds</li>
+                      <li>Cash book entries</li>
+                    </ul>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

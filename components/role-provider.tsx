@@ -56,9 +56,9 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     id: "1",
     name: "Store Manager", // Change this to test different roles
     email: "manager@mobilepos.com",
-    role: "admin", // Change to "admin" to test admin access
+    role: "manager", // Change to "admin" to test admin access
     avatar: "SM",
-    permissions: ADMIN_PERMISSIONS, //MANAGER_PERMISSIONS,
+    permissions: MANAGER_PERMISSIONS,
   })
 
   const hasPermission = (permission: string): boolean => {
