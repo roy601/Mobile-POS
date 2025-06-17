@@ -1,67 +1,59 @@
 import { Tabs } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
-import { useTheme } from 'react-native-paper';
+import { Home, User, Settings, ShoppingCart } from 'lucide-react-native';
 
 export default function TabLayout() {
-  const theme = useTheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+        headerShown: false,
+        tabBarActiveTintColor: '#007AFF',
+        tabBarInactiveTintColor: '#8E8E93',
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.outline,
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: '#E5E5EA',
+          paddingBottom: 8,
+          paddingTop: 8,
+          height: 88,
         },
-        headerStyle: {
-          backgroundColor: theme.colors.primary,
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '500',
         },
-        headerTintColor: theme.colors.onPrimary,
-      }}
-    >
+      }}>
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="dashboard" size={size} color={color} />
+          title: 'Home',
+          tabBarIcon: ({ size, color }) => (
+            <Home size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="pos"
+        name="products"
         options={{
-          title: 'POS',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="point-of-sale" size={size} color={color} />
+          title: 'Products',
+          tabBarIcon: ({ size, color }) => (
+            <ShoppingCart size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="inventory"
+        name="profile"
         options={{
-          title: 'Inventory',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="inventory" size={size} color={color} />
+          title: 'Profile',
+          tabBarIcon: ({ size, color }) => (
+            <User size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="customers"
+        name="settings"
         options={{
-          title: 'Customers',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="people" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="analytics"
-        options={{
-          title: 'Analytics',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="analytics" size={size} color={color} />
+          title: 'Settings',
+          tabBarIcon: ({ size, color }) => (
+            <Settings size={size} color={color} />
           ),
         }}
       />
