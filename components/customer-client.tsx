@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -53,7 +52,7 @@ export function CustomerClient() {
       totalSpent: 1245.5,
       orders: 12,
       lastPurchase: "2023-05-15",
-      status: "Active",
+      status: "Regular",
       avatar: "JD",
       address: "123 Main St, City, State 12345",
       dateJoined: "2023-01-15",
@@ -67,7 +66,7 @@ export function CustomerClient() {
       totalSpent: 3456.75,
       orders: 8,
       lastPurchase: "2023-05-12",
-      status: "Loyalty",
+      status: "Regular",
       avatar: "SD",
       address: "456 Oak Ave, City, State 12345",
       dateJoined: "2022-11-20",
@@ -81,7 +80,7 @@ export function CustomerClient() {
       totalSpent: 876.25,
       orders: 6,
       lastPurchase: "2023-05-10",
-      status: "Active",
+      status: "Regular",
       avatar: "RK",
       address: "789 Pine St, City, State 12345",
       dateJoined: "2023-02-28",
@@ -95,7 +94,7 @@ export function CustomerClient() {
       totalSpent: 2345.0,
       orders: 15,
       lastPurchase: "2023-05-08",
-      status: "Loyalty",
+      status: "Regular",
       avatar: "AM",
       address: "321 Elm St, City, State 12345",
       dateJoined: "2022-08-10",
@@ -109,7 +108,7 @@ export function CustomerClient() {
       totalSpent: 567.5,
       orders: 3,
       lastPurchase: "2023-05-05",
-      status: "Inactive",
+      status: "Regular",
       avatar: "TJ",
       address: "654 Maple Ave, City, State 12345",
       dateJoined: "2023-04-01",
@@ -123,12 +122,7 @@ export function CustomerClient() {
       customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.phone.includes(searchTerm)
 
-    const matchesTab =
-      activeTab === "all" ||
-      (activeTab === "active" && customer.status === "Active") ||
-      (activeTab === "loyalty" && customer.status === "Loyalty")
-
-    return matchesSearch && matchesTab
+    return matchesSearch
   })
 
   const handleViewCustomer = (customer: Customer) => {
@@ -160,8 +154,6 @@ export function CustomerClient() {
   }
 
   const totalCustomers = customers.length
-  const activeCustomers = customers.filter((c) => c.status === "Active").length
-  const loyaltyCustomers = customers.filter((c) => c.status === "Loyalty").length
   const averagePurchase = customers.reduce((sum, c) => sum + c.totalSpent, 0) / customers.length
 
   return (
@@ -176,7 +168,7 @@ export function CustomerClient() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Customers</CardTitle>
@@ -185,18 +177,6 @@ export function CustomerClient() {
           <CardContent>
             <div className="text-2xl font-bold">{totalCustomers}</div>
             <p className="text-xs text-muted-foreground">+180 this month</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Customers</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeCustomers}</div>
-            <p className="text-xs text-muted-foreground">
-              {((activeCustomers / totalCustomers) * 100).toFixed(1)}% of total
-            </p>
           </CardContent>
         </Card>
         <Card>
@@ -211,27 +191,17 @@ export function CustomerClient() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Loyalty Members</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loyaltyCustomers}</div>
-            <p className="text-xs text-muted-foreground">
-              {((loyaltyCustomers / totalCustomers) * 100).toFixed(0)}% of total customers
-            </p>
+            <div className="text-2xl font-bold">৳{customers.reduce((sum, c) => sum + c.totalSpent, 0).toFixed(2)}</div>
+            <p className="text-xs text-muted-foreground">From all customers</p>
           </CardContent>
         </Card>
       </div>
 
       <div className="flex justify-between items-center">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList>
-            <TabsTrigger value="all">All Customers</TabsTrigger>
-            <TabsTrigger value="active">Active</TabsTrigger>
-            <TabsTrigger value="loyalty">Loyalty Members</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -286,17 +256,7 @@ export function CustomerClient() {
                   <TableCell>{customer.orders}</TableCell>
                   <TableCell>{customer.lastPurchase}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        customer.status === "Active"
-                          ? "outline"
-                          : customer.status === "Loyalty"
-                            ? "secondary"
-                            : "default"
-                      }
-                    >
-                      {customer.status}
-                    </Badge>
+                    <Badge variant="outline">{customer.status}</Badge>
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
@@ -487,9 +447,7 @@ export function CustomerClient() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Loyalty">Loyalty</SelectItem>
-                    <SelectItem value="Inactive">Inactive</SelectItem>
+                    <SelectItem value="Regular">Regular</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

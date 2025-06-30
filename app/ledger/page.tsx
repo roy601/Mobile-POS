@@ -1,14 +1,14 @@
 import type { Metadata } from "next"
-import { AnalyticsClient } from "@/components/analytics-client"
+import { LedgerClient } from "@/components/ledger-client"
 import { MainNav } from "@/components/main-nav"
 import { UserNav } from "@/components/user-nav"
 
 export const metadata: Metadata = {
-  title: "Analytics Dashboard",
-  description: "Business analytics and insights",
+  title: "Ledger",
+  description: "Complete accounting ledger and financial records",
 }
 
-export default function AnalyticsPage() {
+export default function LedgerPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <div className="border-b">
@@ -19,7 +19,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
-      <AnalyticsClient />
+      <LedgerClient />
     </div>
   )
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Cloud, Wifi, WifiOff, RefreshCw, CheckCircle, AlertCircle } from "lucide-react"
+import { Cloud, Wifi, WifiOff, RefreshCw, CheckCircle, AlertCircle, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -118,9 +118,12 @@ export function SyncStatus() {
     <Card className="w-full">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg">Data Sync Status</CardTitle>
-            <CardDescription>Local storage and cloud synchronization</CardDescription>
+          <div className="flex items-center gap-2">
+            <Database className="h-5 w-5 text-blue-600" />
+            <div>
+              <CardTitle className="text-lg">Data Sync Control</CardTitle>
+              <CardDescription>Manage your data synchronization</CardDescription>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {isOnline ? (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Download, Filter, Search, Settings, ShoppingBag } from "lucide-react"
+import { Download, Filter, Search, ShoppingBag, Plus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -39,9 +39,13 @@ export default function PurchasesPage() {
       <div className="flex-1 space-y-4 p-8 pt-6">
         <div className="flex items-center justify-between space-y-2">
           <h2 className="text-3xl font-bold tracking-tight">Purchase Management</h2>
+          <Button onClick={() => setActiveTab("add-product")} className="bg-green-600 hover:bg-green-700">
+            <Plus className="mr-2 h-4 w-4" />
+            Add Product
+          </Button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Purchases</CardTitle>
@@ -50,16 +54,6 @@ export default function PurchasesPage() {
             <CardContent>
               <div className="text-2xl font-bold">245</div>
               <p className="text-xs text-muted-foreground">All time</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
-              <ShoppingBag className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">12</div>
-              <p className="text-xs text-muted-foreground">Awaiting delivery</p>
             </CardContent>
           </Card>
           <Card>
@@ -74,12 +68,12 @@ export default function PurchasesPage() {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Average Order Value</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Suppliers</CardTitle>
               <ShoppingBag className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">৳1,352.82</div>
-              <p className="text-xs text-muted-foreground">+5.2% from last month</p>
+              <div className="text-2xl font-bold">8</div>
+              <p className="text-xs text-muted-foreground">Active suppliers</p>
             </CardContent>
           </Card>
         </div>
@@ -209,8 +203,8 @@ export default function PurchasesPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="icon">
-                            <Settings className="h-4 w-4" />
-                            <span className="sr-only">Settings</span>
+                            <Search className="h-4 w-4" />
+                            <span className="sr-only">View</span>
                           </Button>
                         </TableCell>
                       </TableRow>

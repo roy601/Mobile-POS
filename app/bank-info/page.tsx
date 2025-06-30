@@ -1,14 +1,14 @@
 import type { Metadata } from "next"
-import { AnalyticsClient } from "@/components/analytics-client"
+import { BankInfoClient } from "@/components/bank-info-client"
 import { MainNav } from "@/components/main-nav"
 import { UserNav } from "@/components/user-nav"
 
 export const metadata: Metadata = {
-  title: "Analytics Dashboard",
-  description: "Business analytics and insights",
+  title: "Bank Information",
+  description: "Manage bank accounts and financial information",
 }
 
-export default function AnalyticsPage() {
+export default function BankInfoPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <div className="border-b">
@@ -19,7 +19,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
-      <AnalyticsClient />
+      <BankInfoClient />
     </div>
   )
 }

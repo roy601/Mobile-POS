@@ -2,7 +2,9 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
-import { RoleProvider } from "@/components/role-provider"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "@/components/ui/toaster"
+import { StorageProvider } from "@/components/storage-provider"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -18,9 +20,14 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
-        <RoleProvider>{children}</RoleProvider>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
+          <StorageProvider>
+            {children}
+            <Toaster />
+          </StorageProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

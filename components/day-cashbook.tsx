@@ -1,332 +1,213 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Edit, Trash2, DollarSign, TrendingDown, TrendingUp } from "lucide-react"
-
-import { Button } from "@/components/ui/button"
+import { DollarSign, TrendingUp, TrendingDown, Banknote } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
 
-type CashEntry = {
-  id: string
-  date: string
-  type: "income" | "expense"
-  category: string
-  description: string
-  amount: number
+interface DayCashbookProps {
+  selectedDate?: string
 }
 
-export function DayCashbook() {
-  const [entries] = useState<CashEntry[]>([
-    {
-      id: "1",
-      date: "2023-05-18",
-      type: "income",
-      category: "Sales",
-      description: "Daily Sales Revenue",
-      amount: 2450.75,
-    },
-    {
-      id: "2",
-      date: "2023-05-18",
-      type: "expense",
-      category: "Store Rent",
-      description: "Monthly Store Rent",
-      amount: 1200.0,
-    },
-    {
-      id: "3",
-      date: "2023-05-18",
-      type: "expense",
-      category: "Worker Salary",
-      description: "Daily Worker Payment",
-      amount: 150.0,
-    },
-    {
-      id: "4",
-      date: "2023-05-18",
-      type: "expense",
-      category: "Electricity Bill",
-      description: "Monthly Electricity Bill",
-      amount: 85.5,
-    },
-    {
-      id: "5",
-      date: "2023-05-18",
-      type: "expense",
-      category: "Internet Bill",
-      description: "Monthly Internet Bill",
-      amount: 45.0,
-    },
-    {
-      id: "6",
-      date: "2023-05-18",
-      type: "expense",
-      category: "Transportation",
-      description: "Product Delivery Cost",
-      amount: 25.0,
-    },
-  ])
+export function DayCashbook({ selectedDate }: DayCashbookProps) {
+  // Sample data - in real app, this would be fetched based on selectedDate
+  const cashbookData = {
+    openingBalance: 50000,
+    closingBalance: 67500,
+    totalSales: 125000,
+    totalPurchases: 85000,
+    totalExpenses: 12500,
+    totalReceipts: 110000,
+    totalPayments: 97500,
+    netCashFlow: 17500,
+  }
 
-  const totalIncome = entries.filter((e) => e.type === "income").reduce((sum, e) => sum + e.amount, 0)
-  const totalExpenses = entries.filter((e) => e.type === "expense").reduce((sum, e) => sum + e.amount, 0)
-  const netCash = totalIncome - totalExpenses
+  const transactions = [
+    {
+      id: "TXN-001",
+      time: "09:30 AM",
+      description: "Cash Sale - iPhone 14",
+      type: "receipt",
+      amount: 120000,
+      balance: 170000,
+    },
+    {
+      id: "TXN-002",
+      time: "10:15 AM",
+      description: "Purchase Payment - Samsung Stock",
+      type: "payment",
+      amount: 85000,
+      balance: 85000,
+    },
+    {
+      id: "TXN-003",
+      time: "11:00 AM",
+      description: "Customer Payment - John Doe",
+      type: "receipt",
+      amount: 25000,
+      balance: 110000,
+    },
+    {
+      id: "TXN-004",
+      time: "02:30 PM",
+      description: "Store Rent Payment",
+      type: "payment",
+      amount: 25000,
+      balance: 85000,
+    },
+    {
+      id: "TXN-005",
+      time: "03:45 PM",
+      description: "Card Sale - Accessories",
+      type: "receipt",
+      amount: 15000,
+      balance: 100000,
+    },
+    {
+      id: "TXN-006",
+      time: "04:20 PM",
+      description: "Utility Bill Payment",
+      type: "payment",
+      amount: 7500,
+      balance: 92500,
+    },
+  ]
 
   return (
-    <div className="grid gap-6">
+    <div className="space-y-6">
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Income</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
+            <CardTitle className="text-sm font-medium">Opening Balance</CardTitle>
+            <Banknote className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">৳{totalIncome.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">Today's total income</p>
+            <div className="text-2xl font-bold">৳{cashbookData.openingBalance.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Start of day</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-600" />
+            <CardTitle className="text-sm font-medium">Total Receipts</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">৳{totalExpenses.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">Today's total expenses</p>
+            <div className="text-2xl font-bold text-green-600">৳{cashbookData.totalReceipts.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Money received</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Net Cash Flow</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Payments</CardTitle>
+            <TrendingDown className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">৳{cashbookData.totalPayments.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Money paid out</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Closing Balance</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${netCash >= 0 ? "text-green-600" : "text-red-600"}`}>
-              ৳{netCash.toFixed(2)}
-            </div>
-            <p className="text-xs text-muted-foreground">Income - Expenses</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Cash in Hand</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">৳{(netCash + 500).toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">Available cash</p>
+            <div className="text-2xl font-bold">৳{cashbookData.closingBalance.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">End of day</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Add Entry Dialog */}
+      {/* Net Cash Flow */}
       <Card>
         <CardHeader>
+          <CardTitle>Net Cash Flow</CardTitle>
+          <CardDescription>Overall cash movement for the day</CardDescription>
+        </CardHeader>
+        <CardContent>
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Day Cashbook</CardTitle>
-              <CardDescription>Track daily income and expenses</CardDescription>
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">Net Change</p>
+              <p className={`text-2xl font-bold ${cashbookData.netCashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
+                {cashbookData.netCashFlow >= 0 ? "+" : ""}৳{cashbookData.netCashFlow.toLocaleString()}
+              </p>
             </div>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Entry
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Add Cash Entry</DialogTitle>
-                  <DialogDescription>Add a new income or expense entry to the cashbook.</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="entry-type" className="text-right">
-                      Type
-                    </Label>
-                    <Select>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="income">Income</SelectItem>
-                        <SelectItem value="expense">Expense</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="category" className="text-right">
-                      Category
-                    </Label>
-                    <Select>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sales">Sales</SelectItem>
-                        <SelectItem value="store-rent">Store Rent</SelectItem>
-                        <SelectItem value="worker-salary">Worker Salary</SelectItem>
-                        <SelectItem value="electricity">Electricity Bill</SelectItem>
-                        <SelectItem value="internet">Internet Bill</SelectItem>
-                        <SelectItem value="transportation">Transportation</SelectItem>
-                        <SelectItem value="maintenance">Maintenance</SelectItem>
-                        <SelectItem value="supplies">Office Supplies</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="description" className="text-right">
-                      Description
-                    </Label>
-                    <Input id="description" placeholder="Enter description" className="col-span-3" />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="amount" className="text-right">
-                      Amount
-                    </Label>
-                    <Input id="amount" type="number" placeholder="0.00" className="col-span-3" />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="date" className="text-right">
-                      Date
-                    </Label>
-                    <Input id="date" type="date" className="col-span-3" />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline">Cancel</Button>
-                  <Button>Add Entry</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <div className="text-right space-y-1">
+              <p className="text-sm text-muted-foreground">Calculation</p>
+              <p className="text-sm">
+                ৳{cashbookData.totalReceipts.toLocaleString()} - ৳{cashbookData.totalPayments.toLocaleString()}
+              </p>
+            </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Transaction Details */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Transaction Details</CardTitle>
+          <CardDescription>All cash movements throughout the day</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Category</TableHead>
+                <TableHead>Time</TableHead>
+                <TableHead>Transaction ID</TableHead>
                 <TableHead>Description</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Running Balance</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {entries.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell>{entry.date}</TableCell>
+              <TableRow className="bg-muted/50">
+                <TableCell className="font-medium">Start</TableCell>
+                <TableCell>-</TableCell>
+                <TableCell>Opening Balance</TableCell>
+                <TableCell>
+                  <Badge variant="outline">Opening</Badge>
+                </TableCell>
+                <TableCell className="text-right">-</TableCell>
+                <TableCell className="text-right font-medium">
+                  ৳{cashbookData.openingBalance.toLocaleString()}
+                </TableCell>
+              </TableRow>
+              {transactions.map((transaction) => (
+                <TableRow key={transaction.id}>
+                  <TableCell className="font-medium">{transaction.time}</TableCell>
+                  <TableCell>{transaction.id}</TableCell>
+                  <TableCell>{transaction.description}</TableCell>
                   <TableCell>
-                    <span
-                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                        entry.type === "income" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-                      }`}
-                    >
-                      {entry.type === "income" ? (
-                        <TrendingUp className="w-3 h-3 mr-1" />
-                      ) : (
-                        <TrendingDown className="w-3 h-3 mr-1" />
-                      )}
-                      {entry.type}
-                    </span>
+                    <Badge variant={transaction.type === "receipt" ? "default" : "secondary"}>
+                      {transaction.type === "receipt" ? "Receipt" : "Payment"}
+                    </Badge>
                   </TableCell>
-                  <TableCell>{entry.category}</TableCell>
-                  <TableCell>{entry.description}</TableCell>
-                  <TableCell className={entry.type === "income" ? "text-green-600" : "text-red-600"}>
-                    {entry.type === "income" ? "+" : "-"}৳{entry.amount.toFixed(2)}
+                  <TableCell
+                    className={`text-right font-medium ${
+                      transaction.type === "receipt" ? "text-green-600" : "text-red-600"
+                    }`}
+                  >
+                    {transaction.type === "receipt" ? "+" : "-"}৳{transaction.amount.toLocaleString()}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="text-red-500">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  <TableCell className="text-right font-medium">৳{transaction.balance.toLocaleString()}</TableCell>
                 </TableRow>
               ))}
+              <TableRow className="bg-muted/50 border-t-2">
+                <TableCell className="font-medium">End</TableCell>
+                <TableCell>-</TableCell>
+                <TableCell>Closing Balance</TableCell>
+                <TableCell>
+                  <Badge variant="outline">Closing</Badge>
+                </TableCell>
+                <TableCell className="text-right">-</TableCell>
+                <TableCell className="text-right font-bold">৳{cashbookData.closingBalance.toLocaleString()}</TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </CardContent>
       </Card>
-
-      {/* Expense Breakdown */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Expense Breakdown</CardTitle>
-            <CardDescription>Today's expenses by category</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex justify-between">
-                <span className="text-sm">Store Rent</span>
-                <span className="font-medium">৳1,200.00</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Worker Salary</span>
-                <span className="font-medium">৳150.00</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Electricity Bill</span>
-                <span className="font-medium">৳85.50</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Internet Bill</span>
-                <span className="font-medium">৳45.00</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Transportation</span>
-                <span className="font-medium">৳25.00</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly Summary</CardTitle>
-            <CardDescription>This month's cash flow summary</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex justify-between">
-                <span className="text-sm">Total Income</span>
-                <span className="font-medium text-green-600">৳45,231.89</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Total Expenses</span>
-                <span className="font-medium text-red-600">৳32,781.14</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Net Profit</span>
-                <span className="font-medium text-green-600">৳12,450.75</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm">Profit Margin</span>
-                <span className="font-medium">27.5%</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   )
 }

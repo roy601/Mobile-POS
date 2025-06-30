@@ -1,11 +1,16 @@
+export interface SyncStats {
+  total: number
+  synced: number
+  unsynced: number
+}
+
 export interface StorageItem {
   id: string
-  type: "product" | "customer" | "sale" | "purchase" | "return" | "cashbook"
+  type: string
   data: any
-  createdAt: string
-  updatedAt: string
   synced: boolean
-  syncedAt?: string
+  createdAt: Date
+  updatedAt: Date
 }
 
 export class LocalStorage {
@@ -19,101 +24,110 @@ export class LocalStorage {
     return LocalStorage.instance
   }
 
-  private getStorage(): StorageItem[] {
-    if (typeof window === "undefined") return []
-    const data = localStorage.getItem(this.storageKey)
-    return data ? JSON.parse(data) : []
+  private getStorageData(): StorageItem[] {
+    try {
+      const data = localStorage.getItem(this.storageKey)
+      return data ? JSON.parse(data) : []
+    } catch (error) {
+      console.error("Error reading from localStorage:", error)
+      return []
+    }
   }
 
-  private setStorage(data: StorageItem[]): void {
-    if (typeof window === "undefined") return
-    localStorage.setItem(this.storageKey, JSON.stringify(data))
+  private setStorageData(data: StorageItem[]): void {
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(data))
+    } catch (error) {
+      console.error("Error writing to localStorage:", error)
+    }
   }
 
-  // Create or update item
-  save(type: StorageItem["type"], data: any, id?: string): string {
-    const items = this.getStorage()
-    const itemId = id || this.generateId()
-    const now = new Date().toISOString()
+  save(type: string, data: any): string {
+    const items = this.getStorageData()
+    const id = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-    const existingIndex = items.findIndex((item) => item.id === itemId)
-
-    const item: StorageItem = {
-      id: itemId,
+    const newItem: StorageItem = {
+      id,
       type,
       data,
-      createdAt: existingIndex === -1 ? now : items[existingIndex].createdAt,
-      updatedAt: now,
       synced: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     }
 
-    if (existingIndex === -1) {
-      items.push(item)
-    } else {
-      items[existingIndex] = item
+    items.push(newItem)
+    this.setStorageData(items)
+    return id
+  }
+
+  update(id: string, data: any): boolean {
+    const items = this.getStorageData()
+    const index = items.findIndex((item) => item.id === id)
+
+    if (index !== -1) {
+      items[index].data = data
+      items[index].updatedAt = new Date()
+      items[index].synced = false
+      this.setStorageData(items)
+      return true
     }
-
-    this.setStorage(items)
-    return itemId
+    return false
   }
 
-  // Get items by type
-  getByType(type: StorageItem["type"]): StorageItem[] {
-    return this.getStorage().filter((item) => item.type === type)
-  }
-
-  // Get single item
-  getById(id: string): StorageItem | null {
-    return this.getStorage().find((item) => item.id === id) || null
-  }
-
-  // Delete item
   delete(id: string): boolean {
-    const items = this.getStorage()
+    const items = this.getStorageData()
     const filteredItems = items.filter((item) => item.id !== id)
-    this.setStorage(filteredItems)
-    return filteredItems.length < items.length
+
+    if (filteredItems.length !== items.length) {
+      this.setStorageData(filteredItems)
+      return true
+    }
+    return false
   }
 
-  // Get unsynced items
-  getUnsyncedItems(): StorageItem[] {
-    return this.getStorage().filter((item) => !item.synced)
+  getAll(type?: string): StorageItem[] {
+    const items = this.getStorageData()
+    return type ? items.filter((item) => item.type === type) : items
   }
 
-  // Mark items as synced
-  markAsSynced(ids: string[]): void {
-    const items = this.getStorage()
-    const now = new Date().toISOString()
-
-    items.forEach((item) => {
-      if (ids.includes(item.id)) {
-        item.synced = true
-        item.syncedAt = now
-      }
-    })
-
-    this.setStorage(items)
+  getById(id: string): StorageItem | null {
+    const items = this.getStorageData()
+    return items.find((item) => item.id === id) || null
   }
 
-  // Get sync statistics
-  getSyncStats(): { total: number; synced: number; unsynced: number } {
-    const items = this.getStorage()
+  getUnsynced(): StorageItem[] {
+    const items = this.getStorageData()
+    return items.filter((item) => !item.synced)
+  }
+
+  markAsSynced(id: string): boolean {
+    const items = this.getStorageData()
+    const index = items.findIndex((item) => item.id === id)
+
+    if (index !== -1) {
+      items[index].synced = true
+      this.setStorageData(items)
+      return true
+    }
+    return false
+  }
+
+  getSyncStats(): SyncStats {
+    const items = this.getStorageData()
+    const total = items.length
     const synced = items.filter((item) => item.synced).length
-    return {
-      total: items.length,
-      synced,
-      unsynced: items.length - synced,
-    }
+    const unsynced = total - synced
+
+    return { total, synced, unsynced }
   }
 
-  // Clear all data
-  clearAll(): void {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(this.storageKey)
-    }
+  clear(): void {
+    localStorage.removeItem(this.storageKey)
   }
 
-  private generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2)
+  clearSynced(): void {
+    const items = this.getStorageData()
+    const unsyncedItems = items.filter((item) => !item.synced)
+    this.setStorageData(unsyncedItems)
   }
 }

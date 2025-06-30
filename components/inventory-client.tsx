@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Search, Plus, Edit, Trash2, Package, AlertTriangle, Eye } from "lucide-react"
+import { Search, Plus, Edit, Eye, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,7 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { useRole } from "@/components/role-provider"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 
 type Product = {
   id: number
@@ -22,6 +21,7 @@ type Product = {
   minStock: number
   supplier: string
   status: "active" | "inactive"
+  isDemo?: boolean
 }
 
 export function InventoryClient() {
@@ -29,7 +29,6 @@ export function InventoryClient() {
   const { hasPermission, isAdmin } = useRole()
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
-  const [statusFilter, setStatusFilter] = useState("all")
 
   const [products] = useState<Product[]>([
     {
@@ -56,17 +55,41 @@ export function InventoryClient() {
     },
     {
       id: 3,
+      name: "iPhone 13 Demo",
+      sku: "IP13-DEMO",
+      category: "Demo Phones",
+      price: 85000,
+      stock: 3,
+      minStock: 1,
+      supplier: "Apple Inc.",
+      status: "active",
+      isDemo: true,
+    },
+    {
+      id: 4,
+      name: "Samsung S22 Demo",
+      sku: "SGS22-DEMO",
+      category: "Demo Phones",
+      price: 70000,
+      stock: 2,
+      minStock: 1,
+      supplier: "Samsung",
+      status: "active",
+      isDemo: true,
+    },
+    {
+      id: 5,
       name: "Screen Protector",
       sku: "SP-UNIV",
       category: "Accessories",
       price: 500,
-      stock: 3,
+      stock: 50,
       minStock: 20,
       supplier: "Generic",
       status: "active",
     },
     {
-      id: 4,
+      id: 6,
       name: "Phone Case",
       sku: "PC-UNIV",
       category: "Accessories",
@@ -83,23 +106,10 @@ export function InventoryClient() {
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.sku.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesCategory = categoryFilter === "all" || product.category === categoryFilter
-    const matchesStatus = statusFilter === "all" || product.status === statusFilter
-    return matchesSearch && matchesCategory && matchesStatus
+    return matchesSearch && matchesCategory
   })
 
-  const lowStockProducts = products.filter((product) => product.stock <= product.minStock)
-
   const handleAddProduct = () => {
-    if (!hasPermission("inventory_edit")) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to add products. Redirecting to purchase page.",
-        variant: "destructive",
-      })
-      // Redirect to purchase page
-      window.location.href = "/purchases?tab=add-product"
-      return
-    }
     window.location.href = "/purchases?tab=add-product"
   }
 
@@ -116,23 +126,6 @@ export function InventoryClient() {
       title: "Edit Product",
       description: `Editing ${product.name}`,
     })
-  }
-
-  const handleDeleteProduct = (product: Product) => {
-    if (!hasPermission("delete_records")) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to delete products.",
-        variant: "destructive",
-      })
-      return
-    }
-    if (confirm(`Are you sure you want to delete ${product.name}?`)) {
-      toast({
-        title: "Product Deleted",
-        description: `${product.name} has been removed from inventory.`,
-      })
-    }
   }
 
   const handleViewProduct = (product: Product) => {
@@ -157,32 +150,12 @@ export function InventoryClient() {
         </div>
         <div className="flex items-center gap-2">
           {!isAdmin() && <Badge variant="secondary">Manager Access</Badge>}
-          <Button onClick={handleAddProduct}>
+          <Button onClick={handleAddProduct} className="bg-green-600 hover:bg-green-700">
             <Plus className="mr-2 h-4 w-4" />
             Add Product
           </Button>
         </div>
       </div>
-
-      {/* Low Stock Alert */}
-      {lowStockProducts.length > 0 && (
-        <Alert>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            {lowStockProducts.length} product(s) are running low on stock:{" "}
-            {lowStockProducts.map((p) => p.name).join(", ")}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Manager Access Notice */}
-      {!hasPermission("inventory_full") && hasPermission("inventory_view") && (
-        <Alert>
-          <AlertDescription>
-            You have limited inventory access. You can view and edit products but cannot delete them.
-          </AlertDescription>
-        </Alert>
-      )}
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -198,12 +171,12 @@ export function InventoryClient() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Low Stock Items</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Demo Phones</CardTitle>
+            <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{lowStockProducts.length}</div>
-            <p className="text-xs text-muted-foreground">Need restocking</p>
+            <div className="text-2xl font-bold">{products.filter((p) => p.isDemo).length}</div>
+            <p className="text-xs text-muted-foreground">Available for sale</p>
           </CardContent>
         </Card>
         <Card>
@@ -248,18 +221,9 @@ export function InventoryClient() {
           <SelectContent>
             <SelectItem value="all">All Categories</SelectItem>
             <SelectItem value="Smartphones">Smartphones</SelectItem>
+            <SelectItem value="Demo Phones">Demo Phones</SelectItem>
             <SelectItem value="Accessories">Accessories</SelectItem>
             <SelectItem value="Tablets">Tablets</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="inactive">Inactive</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -290,8 +254,17 @@ export function InventoryClient() {
               {filteredProducts.map((product) => {
                 const stockStatus = getStockStatus(product)
                 return (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-medium">{product.name}</TableCell>
+                  <TableRow key={product.id} className={product.isDemo ? "bg-blue-50" : ""}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        {product.name}
+                        {product.isDemo && (
+                          <Badge variant="secondary" className="text-xs">
+                            Demo
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>{product.sku}</TableCell>
                     <TableCell>{product.category}</TableCell>
                     <TableCell>৳{product.price.toLocaleString()}</TableCell>
@@ -315,16 +288,6 @@ export function InventoryClient() {
                         {hasPermission("inventory_edit") && (
                           <Button variant="ghost" size="sm" onClick={() => handleEditProduct(product)}>
                             <Edit className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {hasPermission("delete_records") && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-500"
-                            onClick={() => handleDeleteProduct(product)}
-                          >
-                            <Trash2 className="h-4 w-4" />
                           </Button>
                         )}
                       </div>
