@@ -1,4 +1,6 @@
-import { useRouter } from "next/router";
+"use client"
+
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { createClient } from "@/utils/supabase/component";
@@ -18,7 +20,7 @@ export default function LoginPage() {
     if (error) {
       console.error(error);
     }
-    router.push("/");
+    router.push("/main");
   }
 
   async function signUp() {
@@ -26,7 +28,7 @@ export default function LoginPage() {
     if (error) {
       console.error(error);
     }
-    router.push("/");
+    router.push("/login");
   }
 
   return (
