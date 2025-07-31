@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Save, X, Plus, Minus, Camera, QrCode } from "lucide-react"
+import { use, useState } from "react"
+import { Save, X, Plus, Minus, Camera, QrCode, Barcode } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,6 +18,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
+import { createClient } from "@/utils/supabase/component";
+import { id } from "date-fns/locale"
+
+const supabase = createClient();
+
 
 type ColorVariant = {
   id: string
@@ -28,12 +33,18 @@ type ColorVariant = {
 }
 
 export function AddProductForm() {
+
   const [showAddSupplier, setShowAddSupplier] = useState(false)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [selectedSupplier, setSelectedSupplier] = useState("")
   const [productName, setProductName] = useState("")
   const [modelNumber, setModelNumber] = useState("")
   const [currentVariantId, setCurrentVariantId] = useState("")
+  const [category, setCategory] = useState("")
+  const [brand, setBrand] = useState("")
+  const [costPrice, setCostPrice] = useState("")
+  const [sellPrice, setSellPrice] = useState("")
+  const [description, setDescription] = useState("")
   const [colorVariants, setColorVariants] = useState<ColorVariant[]>([
     { id: "1", color: "", quantity: 0, imei: "", barcode: "" },
   ])
@@ -79,53 +90,145 @@ export function AddProductForm() {
     })
   }
 
-  const handleSaveProduct = () => {
-    const totalQuantity = colorVariants.reduce((sum, variant) => sum + variant.quantity, 0)
-    if (totalQuantity === 0) {
-      toast({
-        title: "Error",
-        description: "Please add at least one color variant with quantity",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (!productName || !modelNumber) {
-      toast({
-        title: "Error",
-        description: "Please fill in product name and model number",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // Check if all variants have barcodes
-    const variantsWithoutBarcode = colorVariants.filter((v) => v.color && v.quantity > 0 && !v.barcode)
-    if (variantsWithoutBarcode.length > 0) {
-      toast({
-        title: "Warning",
-        description: "Some color variants don't have barcodes. Please scan barcodes for all variants.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // Save product with scanned barcodes
-    const productData = {
-      name: productName,
-      model: modelNumber,
-      variants: colorVariants.filter((v) => v.color && v.quantity > 0 && v.barcode),
-      totalQuantity,
-    }
-
-    console.log("Saving product with barcodes:", productData)
-
+  const handleSaveProduct = async () => {
+  // Move ALL validations to the TOP before any database operations
+  
+  // 1. Check basic required fields first
+  if (!productName || !modelNumber) {
     toast({
-      title: "Product Saved",
-      description: `Product saved with ${productData.variants.length} color variants and barcodes`,
+      title: "Error",
+      description: "Please fill in product name and model number",
+      variant: "destructive",
     })
+    return
   }
 
+  // 2. Check if we have valid color variants
+  const validVariants = colorVariants.filter((v) => v.color && v.quantity > 0)
+  const totalQuantity = validVariants.reduce((sum, variant) => sum + variant.quantity, 0)
+  
+  if (totalQuantity === 0) {
+    toast({
+      title: "Error",
+      description: "Please add at least one color variant with quantity",
+      variant: "destructive",
+    })
+    return
+  }
+
+  // 3. Check if all valid variants have barcodes
+  const variantsWithoutBarcode = validVariants.filter((v) => !v.barcode)
+  if (variantsWithoutBarcode.length > 0) {
+    toast({
+      title: "Warning",
+      description: "Some color variants don't have barcodes. Please scan barcodes for all variants.",
+      variant: "destructive",
+    })
+    return
+  }
+
+  // 4. Check required fields for database
+  if (!category || !costPrice || !sellPrice) {
+    toast({
+      title: "Error",
+      description: "Please fill in all required fields (category, cost price, selling price)",
+      variant: "destructive",
+    })
+    return
+  }
+
+  try {
+    // Now proceed with database operations
+    const { data: purchaseData, error: purchaseError } = await supabase
+      .from('purchases')
+      .insert([{
+        product_name: productName,
+        model_number: modelNumber,
+        category,
+        brand,
+        supplier: selectedSupplier || null, // Handle empty supplier
+        cost_price: parseFloat(costPrice),
+        sale_price: parseFloat(sellPrice),
+        description: description || null // Handle empty description
+      }])
+      .select('id')
+
+    if (purchaseError) {
+      console.error("Purchase insert failed:", purchaseError)
+      toast({
+        title: "Database Error",
+        description: `Failed to save product: ${purchaseError.message}`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!purchaseData || purchaseData.length === 0) {
+      console.error("No purchase data returned")
+      toast({
+        title: "Database Error",
+        description: "Failed to save product: No data returned",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const purchaseId = purchaseData[0].id
+
+    // Insert color variants
+    const variantInserts = validVariants.map(v => ({
+      barcode: v.barcode,
+      purchase_id: purchaseId,
+      color: v.color,
+      quantity: v.quantity,
+      imei: v.imei || null // Handle empty IMEI
+    }))
+
+    const { error: variantError } = await supabase
+      .from('color_variants')
+      .insert(variantInserts)
+
+    if (variantError) {
+      console.error("Variant insert failed:", variantError)
+      toast({
+        title: "Database Error",
+        description: `Failed to save variants: ${variantError.message}`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Success!
+    toast({ 
+      title: "Success", 
+      description: `Product saved with ${validVariants.length} color variants!` 
+    })
+
+    // Reset form after successful save
+    resetForm()
+
+  } catch (error) {
+    console.error("Unexpected error:", error)
+    toast({
+      title: "Error",
+      description: "An unexpected error occurred while saving the product",
+      variant: "destructive",
+    })
+  }
+}
+
+// Add this helper function to reset the form
+const resetForm = () => {
+  setProductName("")
+  setModelNumber("")
+  setCategory("")
+  setBrand("")
+  setCostPrice("")
+  setSellPrice("")
+  setDescription("")
+  setSelectedSupplier("")
+  setColorVariants([{ id: "1", color: "", quantity: 0, imei: "", barcode: "" }])
+}
   return (
     <>
       <form className="space-y-6">
@@ -159,8 +262,8 @@ export function AddProductForm() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="category">Category*</Label>
-              <Select>
-                <SelectTrigger>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger id="category">
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -175,18 +278,35 @@ export function AddProductForm() {
             </div>
             <div>
               <Label htmlFor="brand">Brand</Label>
-              <Input id="brand" placeholder="Enter brand name" />
+              <Input 
+                id="brand" 
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                required
+                />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="cost-price">Cost Price*</Label>
-              <Input id="cost-price" type="number" placeholder="0.00 ৳" required />
+              <Input 
+                id="cost-price" 
+                type="number" 
+                placeholder="0.00 ৳" 
+                value={costPrice}
+                onChange={(e) => setCostPrice(e.target.value)}
+                required />
             </div>
             <div>
               <Label htmlFor="selling-price">Selling Price*</Label>
-              <Input id="selling-price" type="number" placeholder="0.00 ৳" required />
+              <Input 
+                id="selling-price" 
+                type="number" 
+                placeholder="0.00 ৳" 
+                value={sellPrice}
+                onChange={(e) => setSellPrice(e.target.value)}
+                required />
             </div>
           </div>
 
@@ -211,7 +331,12 @@ export function AddProductForm() {
 
           <div>
             <Label htmlFor="description">Description</Label>
-            <Textarea id="description" placeholder="Enter product description" className="h-20" />
+            <Textarea
+              id="description" 
+              placeholder="Enter product description" 
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="h-20" />
           </div>
         </div>
 
