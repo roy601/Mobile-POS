@@ -91,43 +91,31 @@ export function AddProductForm() {
   }
 
   const handleSaveProduct = async () => {
-  // Move ALL validations to the TOP before any database operations
-  
-  // 1. Check basic required fields first
+  // --- VALIDATIONS FIRST ---
   if (!productName || !modelNumber) {
-    toast({
-      title: "Error",
-      description: "Please fill in product name and model number",
-      variant: "destructive",
-    })
+    toast({ title: "Error", description: "Please fill in product name and model number", variant: "destructive" })
     return
   }
 
-  // 2. Check if we have valid color variants
   const validVariants = colorVariants.filter((v) => v.color && v.quantity > 0)
-  const totalQuantity = validVariants.reduce((sum, variant) => sum + variant.quantity, 0)
-  
+  const totalQuantity = validVariants.reduce((sum, v) => sum + v.quantity, 0)
+
   if (totalQuantity === 0) {
-    toast({
-      title: "Error",
-      description: "Please add at least one color variant with quantity",
-      variant: "destructive",
-    })
+    toast({ title: "Error", description: "Please add at least one color variant with quantity", variant: "destructive" })
     return
   }
 
-  // 3. Check if all valid variants have barcodes
-  const variantsWithoutBarcode = validVariants.filter((v) => !v.barcode)
+  // Must have barcodes for all valid variants
+  const variantsWithoutBarcode = validVariants.filter((v) => !v.barcode?.trim())
   if (variantsWithoutBarcode.length > 0) {
     toast({
-      title: "Warning",
-      description: "Some color variants don't have barcodes. Please scan barcodes for all variants.",
+      title: "Missing barcodes",
+      description: "Please scan barcodes for all variants.",
       variant: "destructive",
     })
     return
   }
 
-  // 4. Check required fields for database
   if (!category || !costPrice || !sellPrice) {
     toast({
       title: "Error",
@@ -137,85 +125,104 @@ export function AddProductForm() {
     return
   }
 
+  // ---  A) CHECK DUPES INSIDE THE FORM ---
+  const inputBarcodes = validVariants.map((v) => v.barcode.trim())
+  const dupesInForm = inputBarcodes.filter((b, i) => inputBarcodes.indexOf(b) !== i)
+  if (dupesInForm.length > 0) {
+    const uniq = Array.from(new Set(dupesInForm))
+    toast({
+      title: "Duplicate barcodes in form",
+      description: `These barcodes are repeated: ${uniq.join(", ")}`,
+      variant: "destructive",
+    })
+    return
+  }
+
+  // ---  B) CHECK DUPES AGAINST DB BEFORE INSERT ---
   try {
-    // Now proceed with database operations
+    const { data: existing, error: checkErr } = await supabase
+      .from("color_variants")
+      .select("barcode")
+      .in("barcode", inputBarcodes)
+
+    if (checkErr) {
+      // If this fails, we still can rely on DB PK during insert, but we'll warn.
+      console.warn("Preflight barcode check failed:", checkErr)
+    } else if (existing && existing.length > 0) {
+      const found = existing.map((r: any) => r.barcode)
+      toast({
+        title: "Duplicate barcodes in database",
+        description: `Already used: ${found.join(", ")}`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    // --- CREATE PURCHASE FIRST ---
     const { data: purchaseData, error: purchaseError } = await supabase
-      .from('purchases')
+      .from("purchases")
       .insert([{
         product_name: productName,
         model_number: modelNumber,
         category,
         brand,
-        supplier: selectedSupplier || null, // Handle empty supplier
+        supplier: selectedSupplier || null,
         cost_price: parseFloat(costPrice),
         sale_price: parseFloat(sellPrice),
-        description: description || null // Handle empty description
+        description: description || null
       }])
-      .select('id')
+      .select("id")
+      .single()
 
     if (purchaseError) {
       console.error("Purchase insert failed:", purchaseError)
-      toast({
-        title: "Database Error",
-        description: `Failed to save product: ${purchaseError.message}`,
-        variant: "destructive",
-      })
+      toast({ title: "Database Error", description: `Failed to save product: ${purchaseError.message}`, variant: "destructive" })
       return
     }
 
-    if (!purchaseData || purchaseData.length === 0) {
-      console.error("No purchase data returned")
-      toast({
-        title: "Database Error",
-        description: "Failed to save product: No data returned",
-        variant: "destructive",
-      })
+    const purchaseId = purchaseData?.id
+    if (!purchaseId) {
+      toast({ title: "Database Error", description: "Failed to save product: No purchase ID returned", variant: "destructive" })
       return
     }
 
-    const purchaseId = purchaseData[0].id
-
-    // Insert color variants
-    const variantInserts = validVariants.map(v => ({
-      barcode: v.barcode,
+    // --- INSERT VARIANTS (may still hit race-condition PK violation) ---
+    const variantInserts = validVariants.map((v) => ({
+      barcode: v.barcode.trim(),
       purchase_id: purchaseId,
       color: v.color,
       quantity: v.quantity,
-      imei: v.imei || null // Handle empty IMEI
+      imei: v.imei || null
     }))
 
-    const { error: variantError } = await supabase
-      .from('color_variants')
-      .insert(variantInserts)
+    const { error: variantError } = await supabase.from("color_variants").insert(variantInserts)
 
     if (variantError) {
-      console.error("Variant insert failed:", variantError)
-      toast({
-        title: "Database Error",
-        description: `Failed to save variants: ${variantError.message}`,
-        variant: "destructive",
-      })
+      // Handle unique violation nicely
+      const msg = (variantError as any)?.message || ""
+      const isUnique = (variantError as any)?.code === "23505" || /duplicate key|unique/i.test(msg)
+      if (isUnique) {
+        // Try to pull the conflicting barcode from the message
+        const conflict = inputBarcodes.find((b) => msg.includes(b)) || "one of the barcodes"
+        toast({
+          title: "Duplicate barcode",
+          description: `Barcode ${conflict} already exists. Please scan a different code.`,
+          variant: "destructive",
+        })
+      } else {
+        toast({ title: "Database Error", description: `Failed to save variants: ${msg}`, variant: "destructive" })
+      }
       return
     }
 
-    // Success!
-    toast({ 
-      title: "Success", 
-      description: `Product saved with ${validVariants.length} color variants!` 
-    })
-
-    // Reset form after successful save
+    toast({ title: "Success", description: `Product saved with ${validVariants.length} color variants!` })
     resetForm()
-
-  } catch (error) {
-    console.error("Unexpected error:", error)
-    toast({
-      title: "Error",
-      description: "An unexpected error occurred while saving the product",
-      variant: "destructive",
-    })
+  } catch (err: any) {
+    console.error("Unexpected error:", err)
+    toast({ title: "Error", description: "An unexpected error occurred while saving the product", variant: "destructive" })
   }
 }
+
 
 // Add this helper function to reset the form
 const resetForm = () => {
