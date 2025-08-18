@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Search, Filter, RotateCcw, Package, ShoppingCart, Calendar, Building2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -13,99 +13,207 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { SalesReturnForm } from "@/components/sales-return-form"
 import { PurchaseReturnForm } from "@/components/purchase-return-form"
+import { createClient } from "@/utils/supabase/component"
+import { useToast } from "@/hooks/use-toast"
 
 type ReturnRecord = {
   id: string
   type: "sales" | "purchase"
-  date: string
-  invoiceNumber: string
+  date: string            // ISO date string (yyyy-mm-dd...)
+  invoiceNumber: string   // SALE-<id> or PUR-<id>
   customerSupplier: string
-  productName: string
-  quantity: number
-  amount: number
+  productName: string     // first item name or "N items"
+  quantity: number        // sum of return quantities
+  amount: number          // total_refund_amount / total_credit_amount
   reason: string
-  status: "pending" | "completed" | "processing"
+  status: "pending" | "completed" | "processing" | "processed" | "cancelled" | string
 }
 
-const mockReturns: ReturnRecord[] = [
-  {
-    id: "1",
-    type: "sales",
-    date: "2024-01-15",
-    invoiceNumber: "INV-001",
-    customerSupplier: "John Doe",
-    productName: "iPhone 14 Pro",
-    quantity: 1,
-    amount: 95000,
-    reason: "Defective",
-    status: "completed",
-  },
-  {
-    id: "2",
-    type: "purchase",
-    date: "2024-01-14",
-    invoiceNumber: "PUR-002",
-    customerSupplier: "TechSupplies Inc.",
-    productName: "Samsung Galaxy S23",
-    quantity: 2,
-    amount: 84000,
-    reason: "Wrong Model",
-    status: "processing",
-  },
-  {
-    id: "3",
-    type: "sales",
-    date: "2024-01-13",
-    invoiceNumber: "INV-003",
-    customerSupplier: "Jane Smith",
-    productName: "iPad Air",
-    quantity: 1,
-    amount: 65000,
-    reason: "Customer Changed Mind",
-    status: "pending",
-  },
-]
+const supabase = createClient()
 
 export function ReturnsClient() {
+  const { toast } = useToast()
+
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedPeriod, setSelectedPeriod] = useState("All Periods")
+  const [selectedPeriod, setSelectedPeriod] = useState("All Periods") // "YYYY-MM"
   const [selectedSupplier, setSelectedSupplier] = useState("All")
   const [showSalesReturn, setShowSalesReturn] = useState(false)
   const [showPurchaseReturn, setShowPurchaseReturn] = useState(false)
-  const [returns, setReturns] = useState<ReturnRecord[]>(mockReturns)
 
-  const filteredReturns = returns.filter((returnItem) => {
-    const matchesSearch =
-      returnItem.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      returnItem.customerSupplier.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      returnItem.productName.toLowerCase().includes(searchTerm.toLowerCase())
+  const [returns, setReturns] = useState<ReturnRecord[]>([])
+  const [isLoading, setIsLoading] = useState(true)
 
-    const matchesPeriod = selectedPeriod === "All Periods" || returnItem.date.includes(selectedPeriod)
-    const matchesSupplier = selectedSupplier === "All" || returnItem.customerSupplier === selectedSupplier
+  // Fetch returns from Supabase
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      setIsLoading(true)
 
-    return matchesSearch && matchesPeriod && matchesSupplier
-  })
+      // ---- Sales Returns
+      const { data: sales, error: salesErr } = await supabase
+        .from("sales_returns")
+        .select(`
+          id,
+          return_date,
+          original_sale_id,
+          customer_name,
+          customer_phone,
+          return_reason,
+          total_refund_amount,
+          status,
+          sales_return_items (
+            id,
+            product_name,
+            return_quantity,
+            total_refund_amount
+          )
+        `)
+        .order("return_date", { ascending: false })
+
+      if (salesErr) {
+        toast({ title: "Failed to load sales returns", description: salesErr.message, variant: "destructive" })
+      }
+
+      // ---- Purchase Returns
+      const { data: purchases, error: purchaseErr } = await supabase
+        .from("purchase_returns")
+        .select(`
+          id,
+          return_date,
+          original_purchase_id,
+          supplier,
+          return_reason,
+          total_credit_amount,
+          status,
+          purchase_return_items (
+            id,
+            product_name,
+            return_quantity,
+            total_credit_amount
+          )
+        `)
+        .order("return_date", { ascending: false })
+
+      if (purchaseErr) {
+        toast({ title: "Failed to load purchase returns", description: purchaseErr.message, variant: "destructive" })
+      }
+
+      const mappedSales: ReturnRecord[] = (sales ?? []).map((r: any) => {
+        const items = (r.sales_return_items ?? []) as Array<any>
+        const qty = items.reduce((s, it) => s + Number(it.return_quantity ?? 0), 0)
+        const productName =
+          items.length === 0
+            ? "—"
+            : items.length === 1
+            ? items[0].product_name ?? "—"
+            : `${items.length} items`
+        return {
+          id: String(r.id),
+          type: "sales",
+          date: r.return_date ?? "",
+          invoiceNumber: r.original_sale_id != null ? `SALE-${r.original_sale_id}` : "SALE-—",
+          customerSupplier: r.customer_name || r.customer_phone || "—",
+          productName,
+          quantity: qty,
+          amount: Number(r.total_refund_amount ?? 0),
+          reason: r.return_reason ?? "—",
+          status: r.status ?? "pending",
+        }
+      })
+
+      const mappedPurchases: ReturnRecord[] = (purchases ?? []).map((r: any) => {
+        const items = (r.purchase_return_items ?? []) as Array<any>
+        const qty = items.reduce((s, it) => s + Number(it.return_quantity ?? 0), 0)
+        const productName =
+          items.length === 0
+            ? "—"
+            : items.length === 1
+            ? items[0].product_name ?? "—"
+            : `${items.length} items`
+        return {
+          id: String(r.id),
+          type: "purchase",
+          date: r.return_date ?? "",
+          invoiceNumber: r.original_purchase_id != null ? `PUR-${r.original_purchase_id}` : "PUR-—",
+          customerSupplier: r.supplier ?? "—",
+          productName,
+          quantity: qty,
+          amount: Number(r.total_credit_amount ?? 0),
+          reason: r.return_reason ?? "—",
+          status: r.status ?? "pending",
+        }
+      })
+
+      const combined = [...mappedSales, ...mappedPurchases].sort((a, b) => (a.date > b.date ? -1 : 1))
+
+      if (mounted) {
+        setReturns(combined)
+        setIsLoading(false)
+      }
+    })()
+
+    return () => {
+      mounted = false
+    }
+  }, [toast])
+
+  // Derived filter options
+  const supplierOptions = useMemo(() => {
+    const set = new Set<string>()
+    returns.forEach((r) => {
+      if (r.customerSupplier && r.customerSupplier !== "—") set.add(r.customerSupplier)
+    })
+    return ["All", ...Array.from(set).sort()]
+  }, [returns])
+
+  // Helpers
+  const ym = (iso: string) => (iso ? iso.slice(0, 7) : "")
+  const filteredReturns = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase()
+    return returns.filter((r) => {
+      const matchesSearch =
+        !term ||
+        r.invoiceNumber.toLowerCase().includes(term) ||
+        r.customerSupplier.toLowerCase().includes(term) ||
+        r.productName.toLowerCase().includes(term)
+
+      const matchesPeriod = selectedPeriod === "All Periods" || ym(r.date) === selectedPeriod
+      const matchesSupplier = selectedSupplier === "All" || r.customerSupplier === selectedSupplier
+
+      return matchesSearch && matchesPeriod && matchesSupplier
+    })
+  }, [returns, searchTerm, selectedPeriod, selectedSupplier])
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <Badge className="bg-green-100 text-green-800">Completed</Badge>
-      case "processing":
-        return <Badge className="bg-yellow-100 text-yellow-800">Processing</Badge>
-      case "pending":
-        return <Badge className="bg-red-100 text-red-800">Pending</Badge>
-      default:
-        return <Badge variant="secondary">{status}</Badge>
-    }
+    const s = status.toLowerCase()
+    if (s === "completed" || s === "processed")
+      return <Badge className="bg-green-100 text-green-800">Completed</Badge>
+    if (s === "processing")
+      return <Badge className="bg-yellow-100 text-yellow-800">Processing</Badge>
+    if (s === "pending")
+      return <Badge className="bg-red-100 text-red-800">Pending</Badge>
+    if (s === "cancelled")
+      return <Badge variant="secondary">Cancelled</Badge>
+    return <Badge variant="secondary">{status}</Badge>
   }
 
-  const getTypeIcon = (type: string) => {
-    return type === "sales" ? (
+  const getTypeIcon = (type: string) =>
+    type === "sales" ? (
       <ShoppingCart className="h-4 w-4 text-blue-600" />
     ) : (
       <Package className="h-4 w-4 text-green-600" />
     )
-  }
+
+  // Period options (derive from data)
+  const periodOptions = useMemo(() => {
+    const set = new Set<string>()
+    returns.forEach((r) => {
+      const m = ym(r.date)
+      if (m) set.add(m)
+    })
+    // Example labels are the raw YYYY-MM; keep consistent with filter value
+    return ["All Periods", ...Array.from(set).sort().reverse()]
+  }, [returns])
 
   return (
     <div className="flex-1 p-6 space-y-6">
@@ -153,10 +261,11 @@ export function ReturnsClient() {
                   <SelectValue placeholder="Select period" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="All Periods">All Periods</SelectItem>
-                  <SelectItem value="2024-01">January 2024</SelectItem>
-                  <SelectItem value="2023-12">December 2023</SelectItem>
-                  <SelectItem value="2023-11">November 2023</SelectItem>
+                  {periodOptions.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -167,10 +276,11 @@ export function ReturnsClient() {
                   <SelectValue placeholder="Select customer/supplier" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="All">All</SelectItem>
-                  <SelectItem value="John Doe">John Doe</SelectItem>
-                  <SelectItem value="Jane Smith">Jane Smith</SelectItem>
-                  <SelectItem value="TechSupplies Inc.">TechSupplies Inc.</SelectItem>
+                  {supplierOptions.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -214,23 +324,29 @@ export function ReturnsClient() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredReturns.length > 0 ? (
-                  filteredReturns.map((returnItem) => (
-                    <TableRow key={returnItem.id}>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      Loading returns…
+                    </TableCell>
+                  </TableRow>
+                ) : filteredReturns.length > 0 ? (
+                  filteredReturns.map((r) => (
+                    <TableRow key={`${r.type}-${r.id}`}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          {getTypeIcon(returnItem.type)}
-                          <span className="capitalize">{returnItem.type}</span>
+                          {getTypeIcon(r.type)}
+                          <span className="capitalize">{r.type}</span>
                         </div>
                       </TableCell>
-                      <TableCell>{returnItem.date}</TableCell>
-                      <TableCell className="font-medium">{returnItem.invoiceNumber}</TableCell>
-                      <TableCell>{returnItem.customerSupplier}</TableCell>
-                      <TableCell>{returnItem.productName}</TableCell>
-                      <TableCell>{returnItem.quantity}</TableCell>
-                      <TableCell>৳{returnItem.amount.toLocaleString()}</TableCell>
-                      <TableCell>{returnItem.reason}</TableCell>
-                      <TableCell>{getStatusBadge(returnItem.status)}</TableCell>
+                      <TableCell>{r.date?.slice(0, 10) || "—"}</TableCell>
+                      <TableCell className="font-medium">{r.invoiceNumber}</TableCell>
+                      <TableCell>{r.customerSupplier}</TableCell>
+                      <TableCell>{r.productName}</TableCell>
+                      <TableCell>{r.quantity}</TableCell>
+                      <TableCell>৳{Number(r.amount || 0).toLocaleString()}</TableCell>
+                      <TableCell>{r.reason}</TableCell>
+                      <TableCell>{getStatusBadge(r.status)}</TableCell>
                     </TableRow>
                   ))
                 ) : (
@@ -276,7 +392,16 @@ export function ReturnsClient() {
               <Calendar className="h-8 w-8 text-yellow-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-muted-foreground">This Month</p>
-                <p className="text-2xl font-bold">{returns.filter((r) => r.date.includes("2024-01")).length}</p>
+                <p className="text-2xl font-bold">
+                  {
+                    returns.filter((r) => {
+                      const now = new Date()
+                      const month = String(now.getMonth() + 1).padStart(2, "0")
+                      const ymNow = `${now.getFullYear()}-${month}`
+                      return r.date?.startsWith(ymNow)
+                    }).length
+                  }
+                </p>
               </div>
             </div>
           </CardContent>
@@ -287,7 +412,12 @@ export function ReturnsClient() {
               <Building2 className="h-8 w-8 text-purple-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-muted-foreground">Total Value</p>
-                <p className="text-2xl font-bold">৳{returns.reduce((sum, r) => sum + r.amount, 0).toLocaleString()}</p>
+                <p className="text-2xl font-bold">
+                  ৳
+                  {returns
+                    .reduce((sum, r) => sum + Number(r.amount || 0), 0)
+                    .toLocaleString()}
+                </p>
               </div>
             </div>
           </CardContent>
