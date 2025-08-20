@@ -30,12 +30,13 @@ const currencyFormatter = (value: number) => {
   }).format(value)
 }
 
-const renderYAxisLabel = (props: YAxisProps) => {
-  const { x, y, stroke, value } = props
+// Custom YAxis tick renderer
+const renderYAxisTick = (props: any) => {
+  const { x, y, payload, stroke } = props
 
   return (
     <text x={x} y={y} dy={4} fill={stroke} fontSize={10} textAnchor="end">
-      {currencyFormatter(value)}
+      {currencyFormatter(payload.value)}
     </text>
   )
 }
@@ -45,7 +46,7 @@ export function SalesChart() {
     <ResponsiveContainer width="100%" height={350}>
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="name" />
+        <YAxis tick={renderYAxisTick} />
         <YAxis tickFormatter={currencyFormatter} />
         <Tooltip formatter={(value) => currencyFormatter(value as number)} />
         <Legend formatter={(value) => (value === "revenue" ? "Revenue (BDT)" : "Sales (BDT)")} />
