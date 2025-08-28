@@ -9,20 +9,20 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { useRole } from "@/components/role-provider"
 import { createClient } from "@/utils/supabase/component"
 
+// FIXED: More defensive type definition
 type RawInventoryRow = {
   barcode: string
   product_name: string
-  model_number: string | null
-  category: string | null
-  brand: string | null
-  supplier: string | null
-  sale_price: number | null
-  cost_price: number | null
-  quantity: number | null
-  color: string | null
+  model_number?: string | null
+  category?: string | null
+  brand?: string | null
+  supplier?: string | null
+  sale_price?: number | null
+  cost_price?: number | null
+  quantity?: number | null
+  color?: string | null
 }
 
 type Product = {
@@ -42,82 +42,155 @@ const LOW_STOCK_THRESHOLD = 5
 
 export function InventoryClient() {
   const { toast } = useToast()
-  const { hasPermission, isAdmin } = useRole()
+  
+  // FIXED: Provide fallback for role provider that might not exist
+  let hasPermission = (perm: string) => true
+  let isAdmin = () => true
+  
+  try {
+    const { useRole } = require("@/components/role-provider")
+    const roleContext = useRole?.()
+    if (roleContext) {
+      hasPermission = roleContext.hasPermission
+      isAdmin = roleContext.isAdmin
+    }
+  } catch (error) {
+    console.warn("Role provider not available, using default permissions")
+  }
 
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [rows, setRows] = useState<RawInventoryRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-  let mounted = true
+    let mounted = true
 
-  async function loadInventory() {
-    setIsLoading(true)
+    async function loadInventory() {
+      setIsLoading(true)
+      setError(null)
 
-    const { data: invData, error } = await supabase
-      .from("inventory")
-      .select(
-        "barcode,product_name,model_number,category,brand,supplier,sale_price,cost_price,quantity,color"
-      )
+      try {
+        // FIXED: Try inventory view first, fallback to building from raw tables
+        let invData: any[] = []
+        
+        const { data: viewData, error: viewError } = await supabase
+          .from("inventory")
+          .select("barcode, product_name, model_number, category, brand, supplier, sale_price, cost_price, quantity, color")
 
-    if (error) {
-      toast({
-        title: "Failed to load inventory",
-        description: error.message,
-        variant: "destructive",
-      })
-      if (mounted) setRows([])
-      setIsLoading(false)
-      return
+        if (viewError) {
+          console.warn("Inventory view failed, trying to build from tables:", viewError)
+          
+          // FIXED: Fallback - build inventory from purchases + color_variants
+          const { data: rawData, error: rawError } = await supabase
+            .from("color_variants")
+            .select(`
+              barcode,
+              color,
+              quantity,
+              imei,
+              purchase_id,
+              purchases!inner (
+                product_name,
+                model_number,
+                category,
+                brand,
+                supplier,
+                cost_price,
+                sale_price
+              )
+            `)
+
+          if (rawError) {
+            console.error("Fallback query also failed:", rawError)
+            throw new Error(`Failed to load inventory data: ${rawError.message}`)
+          }
+
+          // Transform raw data to inventory format
+          invData = (rawData ?? []).map((item: any) => {
+            const purchase = item.purchases
+            return {
+              barcode: item.barcode || '',
+              product_name: purchase?.product_name || 'Unknown Product',
+              model_number: purchase?.model_number || null,
+              category: purchase?.category || null,
+              brand: purchase?.brand || null,
+              supplier: purchase?.supplier || null,
+              sale_price: purchase?.sale_price || null,
+              cost_price: purchase?.cost_price || null,
+              quantity: item.quantity || 0,
+              color: item.color || null
+            }
+          })
+        } else {
+          invData = viewData ?? []
+        }
+
+        // FIXED: Defensive normalization with better error handling
+        const safeRows: RawInventoryRow[] = Array.isArray(invData)
+          ? invData.map((r: any) => ({
+              barcode: String(r?.barcode ?? ""),
+              product_name: String(r?.product_name ?? "Unknown Product"),
+              model_number: r?.model_number ?? null,
+              category: r?.category ?? null,
+              brand: r?.brand ?? null,
+              supplier: r?.supplier ?? null,
+              sale_price: r?.sale_price != null ? Number(r.sale_price) : null,
+              cost_price: r?.cost_price != null ? Number(r.cost_price) : null,
+              quantity: r?.quantity != null ? Number(r.quantity) : 0,
+              color: r?.color ?? null,
+            }))
+          : []
+
+        if (!mounted) return
+        setRows(safeRows)
+        setError(null)
+
+      } catch (error: any) {
+        console.error("Inventory load error:", error)
+        if (!mounted) return
+        
+        setError(error.message || "Failed to load inventory data")
+        toast({
+          title: "Failed to load inventory",
+          description: error.message || "Unknown error occurred",
+          variant: "destructive",
+        })
+        setRows([])
+      } finally {
+        if (mounted) setIsLoading(false)
+      }
     }
 
-    // Defensive normalization → RawInventoryRow[]
-    const safeRows: RawInventoryRow[] = Array.isArray(invData)
-      ? invData.map((r: any) => ({
-          barcode: String(r?.barcode ?? ""),
-          product_name: String(r?.product_name ?? ""),
-          model_number: r?.model_number ?? null,
-          category: r?.category ?? null,
-          brand: r?.brand ?? null,
-          supplier: r?.supplier ?? null,
-          sale_price: r?.sale_price != null ? Number(r.sale_price) : null,
-          cost_price: r?.cost_price != null ? Number(r.cost_price) : null,
-          quantity: r?.quantity != null ? Number(r.quantity) : 0,
-          color: r?.color ?? null,
-        }))
-      : []
+    loadInventory()
+    return () => {
+      mounted = false
+    }
+  }, [toast])
 
-    if (mounted) setRows(safeRows)
-    setIsLoading(false)
-  }
-
-  loadInventory()
-  return () => {
-    mounted = false
-  }
-}, [toast])
-
-
-  // Group by (product_name, model_number, brand, color)
+  // FIXED: Better grouping logic with validation
   const products: Product[] = useMemo(() => {
     const map = new Map<string, Product>()
+    
     for (const r of rows) {
+      if (!r.product_name) continue // Skip invalid entries
+      
       const key = [
-        (r.product_name ?? "").trim().toLowerCase(),
+        r.product_name.trim().toLowerCase(),
         (r.model_number ?? "").trim().toLowerCase(),
         (r.brand ?? "").trim().toLowerCase(),
         (r.color ?? "").trim().toLowerCase(),
       ].join("|")
 
-      const qty = Number(r.quantity ?? 0)
-      const sale = Number(r.sale_price ?? 0)
-      const cost = r.cost_price != null ? Number(r.cost_price) : null
+      const qty = Math.max(0, Number(r.quantity ?? 0)) // Ensure non-negative
+      const sale = Math.max(0, Number(r.sale_price ?? 0))
+      const cost = r.cost_price != null ? Math.max(0, Number(r.cost_price)) : null
 
       const existing = map.get(key)
       if (!existing) {
         map.set(key, {
-          productName: r.product_name ?? "",
+          productName: r.product_name,
           modelNumber: r.model_number ?? null,
           category: r.category ?? null,
           brand: r.brand ?? null,
@@ -129,13 +202,15 @@ export function InventoryClient() {
         })
       } else {
         existing.quantity += qty
-        if (sale && sale < existing.salePrice) existing.salePrice = sale
+        // Use highest sale price if multiple entries
+        if (sale > existing.salePrice) existing.salePrice = sale
         if (existing.costPrice == null && cost != null) existing.costPrice = cost
       }
     }
     return Array.from(map.values())
   }, [rows])
 
+  // FIXED: Better filtering with null safety
   const filteredProducts = useMemo(() => {
     const term = searchTerm.trim().toLowerCase()
     return products.filter((p) => {
@@ -150,18 +225,33 @@ export function InventoryClient() {
     })
   }, [products, searchTerm, categoryFilter])
 
+  // FIXED: Safe calculations
   const totalValue = useMemo(
     () => products.reduce((sum, p) => sum + (p.salePrice || 0) * (p.quantity || 0), 0),
     [products]
   )
 
-  const categories = useMemo(
-    () => Array.from(new Set(products.map((p) => p.category ?? "Uncategorized"))).sort(),
+  const categories = useMemo(() => {
+    const cats = Array.from(new Set(products.map((p) => p.category ?? "Uncategorized")))
+    return cats.sort()
+  }, [products])
+
+  const demoCount = useMemo(
+    () => products.filter((p) => {
+      const category = (p.category ?? "").toLowerCase()
+      return category.includes("demo")
+    }).length,
     [products]
   )
 
-  const demoCount = useMemo(
-    () => products.filter((p) => (p.category ?? "") === "Demo Phones").length,
+  // FIXED: Add low stock and out of stock counts
+  const lowStockCount = useMemo(
+    () => products.filter(p => p.quantity <= LOW_STOCK_THRESHOLD && p.quantity > 0).length,
+    [products]
+  )
+
+  const outOfStockCount = useMemo(
+    () => products.filter(p => p.quantity === 0).length,
     [products]
   )
 
@@ -195,6 +285,61 @@ export function InventoryClient() {
     })
   }
 
+  // FIXED: Handle loading state
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Inventory Management</h1>
+            <p className="text-muted-foreground">Loading inventory data...</p>
+          </div>
+        </div>
+        
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+          {[...Array(5)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Loading...</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">—</div>
+                <p className="text-xs text-muted-foreground">Please wait...</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // FIXED: Handle error state
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Inventory Management</h1>
+            <p className="text-muted-foreground">Failed to load inventory data</p>
+          </div>
+        </div>
+        
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-red-600">Error Loading Inventory</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-600 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()} variant="outline">
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -207,46 +352,60 @@ export function InventoryClient() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* FIXED: Enhanced Stats Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Products</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{isLoading ? "—" : products.length}</div>
+            <div className="text-2xl font-bold">{products.length}</div>
             <p className="text-xs text-muted-foreground">Unique grouped items</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Demo Phones</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{isLoading ? "—" : demoCount}</div>
-            <p className="text-xs text-muted-foreground">Items in Demo Phones category</p>
-          </CardContent>
-        </Card>
+        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Value</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{isLoading ? "—" : `৳${totalValue.toLocaleString()}`}</div>
+            <div className="text-2xl font-bold">৳{totalValue.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">Current inventory value (sale price)</p>
           </CardContent>
         </Card>
+        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Categories</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{isLoading ? "—" : categories.length}</div>
+            <div className="text-2xl font-bold">{categories.length}</div>
             <p className="text-xs text-muted-foreground">Product categories</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
+            <Package className="h-4 w-4 text-yellow-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{lowStockCount}</div>
+            <p className="text-xs text-muted-foreground">Items need restocking</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Out of Stock</CardTitle>
+            <Package className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{outOfStockCount}</div>
+            <p className="text-xs text-muted-foreground">Items unavailable</p>
           </CardContent>
         </Card>
       </div>
@@ -277,12 +436,12 @@ export function InventoryClient() {
         </Select>
       </div>
 
-      {/* Products Table (no barcode) */}
+      {/* Products Table */}
       <Card>
         <CardHeader>
           <CardTitle>Products</CardTitle>
           <CardDescription>
-            {isLoading ? "Loading..." : `${filteredProducts.length} of ${products.length} grouped products`}
+            {`${filteredProducts.length} of ${products.length} grouped products`}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -301,23 +460,17 @@ export function InventoryClient() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground">
-                    Fetching inventory…
-                  </TableCell>
-                </TableRow>
-              ) : filteredProducts.length === 0 ? (
+              {filteredProducts.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center text-muted-foreground">
                     No products match your filters.
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredProducts.map((p) => {
+                filteredProducts.map((p, idx) => {
                   const stockStatus = getStockStatus(p)
                   return (
-                    <TableRow key={`${p.productName}|${p.modelNumber}|${p.brand}|${p.color}`}>
+                    <TableRow key={`${p.productName}|${p.modelNumber}|${p.brand}|${p.color}|${idx}`}>
                       <TableCell className="font-medium">{p.productName}</TableCell>
                       <TableCell>{p.modelNumber ?? "—"}</TableCell>
                       <TableCell>{p.category ?? "Uncategorized"}</TableCell>

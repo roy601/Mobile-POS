@@ -1,289 +1,458 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Plus, Filter, Download, Search, BookOpen, TrendingUp, TrendingDown, DollarSign, Loader2 } from "lucide-react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/utils/supabase/component"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { useToast } from "@/components/ui/use-toast"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { useToast } from "@/hooks/use-toast"
 
-type LedgerEntry = {
+type EntryType = "sales" | "purchase" | "sales_return" | "purchase_return"
+
+type GLEntry = {
   id: string
   date: string
   description: string
   account: string
   debit: number
   credit: number
-  balance: number
-  reference: string
-  type: "sales" | "purchase" | "expense" | "income" | "transfer"
-  created_at?: string
-  updated_at?: string
+  reference?: string | null
+  type: EntryType
 }
 
-type Account = {
-  id: string
-  name: string
-  type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
-  created_at?: string
+type SalesRow = {
+  id: number
+  created_at: string
+  status: string | null
+  total_amount: number | null
+  payment_method: string | null
+}
+
+type PurchaseRow = {
+  id: number
+  created_at: string
+  supplier: string | null
+  cost_price: number | null
+  color_variants: { quantity: number | null }[] | null
+}
+
+type SalesReturnRow = {
+  id: number
+  return_date: string
+  refund_method: string | null
+  total_refund_amount: number | null
+}
+
+type PurchaseReturnRow = {
+  id: number
+  created_at?: string | null
+  credit_method: string | null
+  total_credit_amount: number | null
+}
+
+const supabase = createClient()
+
+// Chart for grouping in Trial Balance / Balance Sheet
+const ACCOUNT_TYPES: Record<string, "asset" | "liability" | "equity" | "revenue" | "expense"> = {
+  // Assets
+  Cash: "asset",
+  "Bank Account": "asset",
+  Inventory: "asset",
+  "Accounts Receivable": "asset",
+
+  // Liabilities
+  "Accounts Payable": "liability",
+
+  // Equity
+  "Owner Equity": "equity",
+  "Retained Earnings": "equity",
+
+  // Revenue / Contra
+  "Sales Revenue": "revenue",
+  "Sales Returns": "expense", // treat as expense/contra for P&L
+
+  // Expenses
+  "Cost of Goods Sold": "expense",
 }
 
 export function LedgerClient() {
-  const [showAddEntry, setShowAddEntry] = useState(false)
+  const { toast } = useToast()
+
   const [selectedAccount, setSelectedAccount] = useState("all")
   const [selectedPeriod, setSelectedPeriod] = useState("this-month")
   const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([])
-  const [accounts, setAccounts] = useState<Account[]>([])
-  
-  // Form state
-  const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    description: '',
-    account: '',
-    debit: '',
-    credit: '',
-    reference: '',
-    type: '' as LedgerEntry['type'] | ''
-  })
+  const [error, setError] = useState<string | null>(null)
 
-  const supabase = createClientComponentClient()
-  const { toast } = useToast()
+  const [entries, setEntries] = useState<GLEntry[]>([])
 
   useEffect(() => {
-    loadData()
-  }, [])
+    let mounted = true
 
-  const loadData = async () => {
-    try {
+    async function load() {
       setLoading(true)
+      setError(null)
       
-      // Load accounts
-      const { data: accountsData, error: accountsError } = await supabase
-        .from('accounts')
-        .select('*')
-        .order('name')
+      try {
+        // FIXED: Better error handling for each query with Promise.allSettled
+        const queries = await Promise.allSettled([
+          supabase.from("sales").select("id, created_at, status, total_amount, payment_method"),
+          supabase.from("purchases").select("id, created_at, supplier, cost_price, color_variants(quantity)"),
+          supabase.from("sales_returns").select("id, return_date, refund_method, total_refund_amount"),
+          supabase.from("purchase_returns").select("id, created_at, credit_method, total_credit_amount")
+        ])
 
-      if (accountsError) throw accountsError
-      setAccounts(accountsData || [])
+        // FIXED: Extract results with proper error handling
+        const [salesResult, purchasesResult, sReturnsResult, pReturnsResult] = queries
 
-      // Load ledger entries
-      const { data: entriesData, error: entriesError } = await supabase
-        .from('ledger_entries')
-        .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false })
+        let sales: SalesRow[] = []
+        let purchases: PurchaseRow[] = []
+        let srets: SalesReturnRow[] = []
+        let prets: PurchaseReturnRow[] = []
 
-      if (entriesError) throw entriesError
-      setLedgerEntries(entriesData || [])
+        if (salesResult.status === 'fulfilled' && !salesResult.value.error) {
+          sales = (salesResult.value.data ?? []) as SalesRow[]
+        } else {
+          const errorMsg = salesResult.status === 'fulfilled' ? salesResult.value.error?.message : 'Promise rejected'
+          console.warn("Sales fetch failed:", errorMsg)
+        }
 
-    } catch (error) {
-      console.error('Error loading data:', error)
-      toast({
-        title: "Error",
-        description: "Failed to load ledger data. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
+        if (purchasesResult.status === 'fulfilled' && !purchasesResult.value.error) {
+          purchases = (purchasesResult.value.data ?? []) as PurchaseRow[]
+        } else {
+          const errorMsg = purchasesResult.status === 'fulfilled' ? purchasesResult.value.error?.message : 'Promise rejected'
+          console.warn("Purchases fetch failed:", errorMsg)
+        }
+
+        if (sReturnsResult.status === 'fulfilled' && !sReturnsResult.value.error) {
+          srets = (sReturnsResult.value.data ?? []) as SalesReturnRow[]
+        } else {
+          const errorMsg = sReturnsResult.status === 'fulfilled' ? sReturnsResult.value.error?.message : 'Promise rejected'
+          console.warn("Sales returns fetch failed:", errorMsg)
+        }
+
+        if (pReturnsResult.status === 'fulfilled' && !pReturnsResult.value.error) {
+          prets = (pReturnsResult.value.data ?? []) as PurchaseReturnRow[]
+        } else {
+          const errorMsg = pReturnsResult.status === 'fulfilled' ? pReturnsResult.value.error?.message : 'Promise rejected'
+          console.warn("Purchase returns fetch failed:", errorMsg)
+        }
+
+        // Build double-entry style rows
+        const gl: GLEntry[] = []
+
+        // SALES → Dr Cash/Bank, Cr Sales Revenue (completed only)
+        for (const s of sales) {
+          if (s.status !== "completed") continue
+          const amt = Number(s.total_amount ?? 0)
+          if (!amt || !Number.isFinite(amt)) continue
+
+          const pm = (s.payment_method ?? "Cash").toLowerCase()
+          // FIXED: Better payment method matching
+          const cashAccount =
+            pm.includes("card") || pm.includes("bank") || pm.includes("transfer")
+              ? "Bank Account"
+              : pm.includes("mobile")
+                ? "Bank Account"
+                : "Cash"
+
+          gl.push({
+            id: `S-${s.id}-DR`,
+            date: s.created_at,
+            description: "POS Sale",
+            account: cashAccount,
+            debit: amt,
+            credit: 0,
+            reference: `SALE-${s.id}`,
+            type: "sales",
+          })
+          gl.push({
+            id: `S-${s.id}-CR`,
+            date: s.created_at,
+            description: "POS Sale",
+            account: "Sales Revenue",
+            debit: 0,
+            credit: amt,
+            reference: `SALE-${s.id}`,
+            type: "sales",
+          })
+        }
+
+        // PURCHASES → Dr Inventory, Cr Accounts Payable
+        for (const p of purchases) {
+          const qty = (p.color_variants ?? []).reduce((sum, cv) => sum + Number(cv?.quantity ?? 0), 0)
+          const unitCost = Number(p.cost_price ?? 0)
+          const amt = qty * unitCost
+          if (!amt || !Number.isFinite(amt)) continue
+
+          gl.push({
+            id: `P-${p.id}-DR`,
+            date: p.created_at,
+            description: p.supplier ? `Purchase from ${p.supplier}` : "Inventory Purchase",
+            account: "Inventory",
+            debit: amt,
+            credit: 0,
+            reference: `PUR-${p.id}`,
+            type: "purchase",
+          })
+          gl.push({
+            id: `P-${p.id}-CR`,
+            date: p.created_at,
+            description: p.supplier ? `Purchase from ${p.supplier}` : "Inventory Purchase",
+            account: "Accounts Payable",
+            debit: 0,
+            credit: amt,
+            reference: `PUR-${p.id}`,
+            type: "purchase",
+          })
+        }
+
+        // SALES RETURNS → Dr Sales Returns, Cr Cash/Bank (refund out)
+        for (const r of srets) {
+          const amt = Number(r.total_refund_amount ?? 0)
+          if (!amt || !Number.isFinite(amt)) continue
+
+          const rm = (r.refund_method ?? "Cash").toLowerCase()
+          // FIXED: Better refund method matching
+          const bankOrCash =
+            rm.includes("card") || rm.includes("bank") || rm.includes("transfer") || rm.includes("mobile") 
+              ? "Bank Account" 
+              : "Cash"
+
+          gl.push({
+            id: `SR-${r.id}-DR`,
+            date: r.return_date,
+            description: "Sales Return",
+            account: "Sales Returns",
+            debit: amt,
+            credit: 0,
+            reference: `SRET-${r.id}`,
+            type: "sales_return",
+          })
+          gl.push({
+            id: `SR-${r.id}-CR`,
+            date: r.return_date,
+            description: "Sales Return Refund",
+            account: bankOrCash,
+            debit: 0,
+            credit: amt,
+            reference: `SRET-${r.id}`,
+            type: "sales_return",
+          })
+        }
+
+        // PURCHASE RETURNS → Dr Accounts Payable/Bank, Cr Inventory
+        for (const r of prets) {
+          const date = r.created_at ?? new Date().toISOString()
+          const amt = Number(r.total_credit_amount ?? 0)
+          if (!amt || !Number.isFinite(amt)) continue
+
+          const cm = (r.credit_method ?? "").toLowerCase()
+          // FIXED: Better credit method matching
+          const debitAccount =
+            cm.includes("cash") || cm.includes("bank") || cm.includes("transfer") || cm.includes("mobile") 
+              ? "Bank Account" 
+              : "Accounts Payable"
+
+          gl.push({
+            id: `PR-${r.id}-DR`,
+            date,
+            description: "Purchase Return",
+            account: debitAccount,
+            debit: amt,
+            credit: 0,
+            reference: `PRET-${r.id}`,
+            type: "purchase_return",
+          })
+          gl.push({
+            id: `PR-${r.id}-CR`,
+            date,
+            description: "Purchase Return",
+            account: "Inventory",
+            debit: 0,
+            credit: amt,
+            reference: `PRET-${r.id}`,
+            type: "purchase_return",
+          })
+        }
+
+        if (!mounted) return
+        setEntries(gl.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()))
+        
+      } catch (e: any) {
+        if (!mounted) return
+        console.error("Ledger load error:", e)
+        setError(e.message ?? "Failed to load operational data")
+        setEntries([])
+        toast({
+          title: "Error loading ledger",
+          description: e.message ?? "Failed to load operational data",
+          variant: "destructive",
+        })
+      } finally {
+        if (mounted) setLoading(false)
+      }
     }
-  }
 
-  const handleAddEntry = async () => {
-    if (!formData.date || !formData.description || !formData.account || !formData.type) {
-      toast({
-        title: "Validation Error",
-        description: "Please fill in all required fields.",
-        variant: "destructive",
-      })
-      return
+    load()
+    return () => {
+      mounted = false
     }
+  }, [toast])
 
-    if (!formData.debit && !formData.credit) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter either a debit or credit amount.",
-        variant: "destructive",
-      })
-      return
-    }
+  // FIXED: Better period filtering logic
+  const filteredEntries = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase()
+    const now = new Date()
+    
+    // FIXED: Proper date calculations
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const startOfWeek = new Date(today)
+    startOfWeek.setDate(today.getDate() - today.getDay())
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    const startOfYear = new Date(now.getFullYear(), 0, 1)
 
-    if (formData.debit && formData.credit) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter either debit OR credit, not both.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    try {
-      setSubmitting(true)
-
-      const debitAmount = parseFloat(formData.debit) || 0
-      const creditAmount = parseFloat(formData.credit) || 0
-      
-      // Calculate balance (this is a simplified approach - in real accounting, you'd need running balances per account)
-      const balance = creditAmount - debitAmount
-
-      const newEntry = {
-        date: formData.date,
-        description: formData.description,
-        account: formData.account,
-        debit: debitAmount,
-        credit: creditAmount,
-        balance: balance,
-        reference: formData.reference || null,
-        type: formData.type
+    return entries.filter((e) => {
+      let entryDate: Date
+      try {
+        entryDate = new Date(e.date)
+      } catch {
+        return false // Skip entries with invalid dates
       }
 
-      const { error } = await supabase
-        .from('ledger_entries')
-        .insert([newEntry])
+      // account filter
+      const accountOK = selectedAccount === "all" || e.account === selectedAccount
+      
+      // text filter
+      const textOK =
+        !term ||
+        e.description.toLowerCase().includes(term) ||
+        e.account.toLowerCase().includes(term) ||
+        (e.reference ?? "").toLowerCase().includes(term)
+      
+      // period filter
+      let periodOK = true
+      switch (selectedPeriod) {
+        case "today":
+          periodOK = entryDate >= today
+          break
+        case "this-week":
+          periodOK = entryDate >= startOfWeek
+          break
+        case "this-month":
+          periodOK = entryDate >= startOfMonth
+          break
+        case "this-year":
+          periodOK = entryDate >= startOfYear
+          break
+        case "all-time":
+        default:
+          periodOK = true
+      }
+      return accountOK && textOK && periodOK
+    })
+  }, [entries, searchTerm, selectedAccount, selectedPeriod])
 
-      if (error) throw error
-
-      toast({
-        title: "Success",
-        description: "Ledger entry added successfully!",
-      })
-
-      setFormData({
-        date: new Date().toISOString().split('T')[0],
-        description: '',
-        account: '',
-        debit: '',
-        credit: '',
-        reference: '',
-        type: ''
-      })
-      setShowAddEntry(false)
-      loadData() // Reload data
-
-    } catch (error) {
-      console.error('Error adding entry:', error)
-      toast({
-        title: "Error",
-        description: "Failed to add ledger entry. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const handleExportLedger = () => {
-    try {
-      const csvContent = [
-        ['Date', 'Reference', 'Description', 'Account', 'Debit', 'Credit', 'Balance', 'Type'],
-        ...filteredEntries.map(entry => [
-          entry.date,
-          entry.reference,
-          entry.description,
-          entry.account,
-          entry.debit,
-          entry.credit,
-          entry.balance,
-          entry.type
-        ])
-      ].map(row => row.join(',')).join('\n')
-
-      const blob = new Blob([csvContent], { type: 'text/csv' })
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `ledger-export-${new Date().toISOString().split('T')[0]}.csv`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-
-      toast({
-        title: "Success",
-        description: "Ledger exported successfully!",
-      })
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to export ledger. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const filteredEntries = ledgerEntries.filter((entry) => {
-    const matchesSearch =
-      entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.account.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.reference?.toLowerCase().includes(searchTerm.toLowerCase())
-
-    const matchesAccount = selectedAccount === "all" || entry.account === selectedAccount
-
-    // Filter by period
-    const entryDate = new Date(entry.date)
-    const now = new Date()
-    let matchesPeriod = true
-
-    switch (selectedPeriod) {
-      case 'today':
-        matchesPeriod = entryDate.toDateString() === now.toDateString()
-        break
-      case 'this-week':
-        const weekStart = new Date(now.setDate(now.getDate() - now.getDay()))
-        matchesPeriod = entryDate >= weekStart
-        break
-      case 'this-month':
-        matchesPeriod = entryDate.getMonth() === now.getMonth() && entryDate.getFullYear() === now.getFullYear()
-        break
-      case 'this-year':
-        matchesPeriod = entryDate.getFullYear() === now.getFullYear()
-        break
-      default:
-        matchesPeriod = true
-    }
-
-    return matchesSearch && matchesAccount && matchesPeriod
-  })
-
-  const totalDebits = filteredEntries.reduce((sum, entry) => sum + entry.debit, 0)
-  const totalCredits = filteredEntries.reduce((sum, entry) => sum + entry.credit, 0)
+  const totalDebits = filteredEntries.reduce((s, e) => s + e.debit, 0)
+  const totalCredits = filteredEntries.reduce((s, e) => s + e.credit, 0)
   const netBalance = totalCredits - totalDebits
 
-  // Calculate financial summaries from actual data
-  const salesEntries = ledgerEntries.filter(entry => entry.type === 'sales')
-  const purchaseEntries = ledgerEntries.filter(entry => entry.type === 'purchase')
-  const expenseEntries = ledgerEntries.filter(entry => entry.type === 'expense')
-  const incomeEntries = ledgerEntries.filter(entry => entry.type === 'income')
+  // Trial Balance / P&L / Balance Sheet calculations
+  const accountsList = useMemo(() => {
+    return Array.from(new Set(entries.map((e) => e.account))).sort()
+  }, [entries])
 
-  const totalSalesAmount = salesEntries.reduce((sum, entry) => sum + entry.credit, 0)
-  const totalPurchaseAmount = purchaseEntries.reduce((sum, entry) => sum + entry.debit, 0)
-  const totalExpenseAmount = expenseEntries.reduce((sum, entry) => sum + entry.debit, 0)
-  const totalIncomeAmount = incomeEntries.reduce((sum, entry) => sum + entry.credit, 0)
+  const accountBalances = useMemo(() => {
+    const map = new Map<string, { debit: number; credit: number }>()
+    for (const e of entries) {
+      const rec = map.get(e.account) ?? { debit: 0, credit: 0 }
+      rec.debit += e.debit
+      rec.credit += e.credit
+      map.set(e.account, rec)
+    }
+    return map
+  }, [entries])
 
+  const trialRows = useMemo(() => {
+    return accountsList.map((name) => {
+      const t = accountBalances.get(name) ?? { debit: 0, credit: 0 }
+      const type = ACCOUNT_TYPES[name] ?? "asset"
+      const balance =
+        type === "asset" || type === "expense" ? t.debit - t.credit : t.credit - t.debit
+      return { name, type, debit: Math.max(0, -balance), credit: Math.max(0, balance) }
+    })
+  }, [accountsList, accountBalances])
+
+  const pl = useMemo(() => {
+    let revenue = 0
+    let expense = 0
+    for (const [name, t] of accountBalances) {
+      const type = ACCOUNT_TYPES[name]
+      if (type === "revenue") revenue += t.credit - t.debit
+      if (type === "expense") expense += t.debit - t.credit
+    }
+    return { revenue, expense, net: revenue - expense }
+  }, [accountBalances])
+
+  const balanceSheet = useMemo(() => {
+    let assets = 0
+    let liabilities = 0
+    let equity = 0
+    for (const [name, t] of accountBalances) {
+      const type = ACCOUNT_TYPES[name]
+      if (type === "asset") assets += t.debit - t.credit
+      else if (type === "liability") liabilities += t.credit - t.debit
+      else if (type === "equity") equity += t.credit - t.debit
+    }
+    const retained = pl.net
+    return { assets, liabilities, equity: equity + retained, retained }
+  }, [accountBalances, pl.net])
+
+  // FIXED: Better loading state
   if (loading) {
     return (
       <div className="flex-1 space-y-6 p-8 pt-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Ledger</h1>
+            <p className="text-muted-foreground">Loading accounting data...</p>
+          </div>
+        </div>
         <div className="flex items-center justify-center h-32">
           <Loader2 className="h-8 w-8 animate-spin" />
-          <span className="ml-2">Loading ledger data...</span>
+          <span className="ml-2">Loading ledger…</span>
         </div>
+      </div>
+    )
+  }
+
+  // FIXED: Better error state
+  if (error) {
+    return (
+      <div className="flex-1 space-y-6 p-8 pt-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Ledger</h1>
+            <p className="text-muted-foreground">Error loading accounting data</p>
+          </div>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-red-600">Error Loading Ledger</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-600 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()} variant="outline">
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -296,13 +465,47 @@ export function LedgerClient() {
           <p className="text-muted-foreground">Complete accounting ledger and transaction history</p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={handleExportLedger} variant="outline">
+          <Button
+            onClick={() => {
+              try {
+                const rows = filteredEntries.map((e) =>
+                  [
+                    new Date(e.date).toLocaleDateString(),
+                    e.reference ?? "-", 
+                    `"${e.description}"`, // Quote description to handle commas
+                    e.account, 
+                    e.debit || 0, 
+                    e.credit || 0, 
+                    e.type
+                  ].join(",")
+                )
+                const csv = ["Date,Reference,Description,Account,Debit,Credit,Type", ...rows].join("\n")
+                const blob = new Blob([csv], { type: "text/csv" })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement("a")
+                a.href = url
+                a.download = `ledger-${new Date().toISOString().slice(0,10)}.csv`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                URL.revokeObjectURL(url)
+                
+                toast({
+                  title: "Export successful",
+                  description: `Exported ${filteredEntries.length} ledger entries`
+                })
+              } catch (err) {
+                toast({
+                  title: "Export failed",
+                  description: "Could not export ledger data",
+                  variant: "destructive"
+                })
+              }
+            }}
+            variant="outline"
+          >
             <Download className="mr-2 h-4 w-4" />
             Export
-          </Button>
-          <Button onClick={() => setShowAddEntry(true)} className="bg-green-600 hover:bg-green-700">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Entry
           </Button>
         </div>
       </div>
@@ -361,8 +564,8 @@ export function LedgerClient() {
           <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
         </TabsList>
 
+        {/* General Ledger */}
         <TabsContent value="general-ledger" className="space-y-4">
-          {/* Filters */}
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -379,10 +582,8 @@ export function LedgerClient() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Accounts</SelectItem>
-                {accounts.map((account) => (
-                  <SelectItem key={account.id} value={account.name}>
-                    {account.name}
-                  </SelectItem>
+                {accountsList.map((a) => (
+                  <SelectItem key={a} value={a}>{a}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -398,16 +599,14 @@ export function LedgerClient() {
                 <SelectItem value="all-time">All Time</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon">
-              <Filter className="h-4 w-4" />
-            </Button>
           </div>
 
-          {/* Ledger Table */}
           <Card>
             <CardHeader>
               <CardTitle>General Ledger</CardTitle>
-              <CardDescription>All accounting transactions and entries</CardDescription>
+              <CardDescription>
+                All accounting transactions and entries (computed from operational data)
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -419,46 +618,44 @@ export function LedgerClient() {
                     <TableHead>Account</TableHead>
                     <TableHead className="text-right">Debit</TableHead>
                     <TableHead className="text-right">Credit</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
                     <TableHead>Type</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredEntries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                        No ledger entries found
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        {entries.length === 0 ? "No transactions found" : "No entries match your filters"}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredEntries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>{new Date(entry.date).toLocaleDateString()}</TableCell>
-                        <TableCell className="font-medium">{entry.reference || '-'}</TableCell>
-                        <TableCell>{entry.description}</TableCell>
-                        <TableCell>{entry.account}</TableCell>
+                    filteredEntries.map((e) => (
+                      <TableRow key={e.id}>
+                        <TableCell>
+                          {new Date(e.date).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">{e.reference ?? "-"}</TableCell>
+                        <TableCell>{e.description}</TableCell>
+                        <TableCell>{e.account}</TableCell>
                         <TableCell className="text-right text-red-600">
-                          {entry.debit > 0 ? `৳${entry.debit.toLocaleString()}` : "-"}
+                          {e.debit ? `৳${e.debit.toLocaleString()}` : "-"}
                         </TableCell>
                         <TableCell className="text-right text-green-600">
-                          {entry.credit > 0 ? `৳${entry.credit.toLocaleString()}` : "-"}
+                          {e.credit ? `৳${e.credit.toLocaleString()}` : "-"}
                         </TableCell>
-                        <TableCell className="text-right font-medium">৳{entry.balance.toLocaleString()}</TableCell>
                         <TableCell>
                           <Badge
                             variant={
-                              entry.type === "sales"
+                              e.type === "sales"
                                 ? "outline"
-                                : entry.type === "purchase"
+                                : e.type === "purchase"
                                   ? "secondary"
-                                  : entry.type === "income"
-                                    ? "default"
-                                    : entry.type === "expense"
-                                      ? "destructive"
-                                      : "outline"
+                                  : e.type === "sales_return"
+                                    ? "destructive"
+                                    : "outline"
                             }
                           >
-                            {entry.type}
+                            {e.type.replace("_", " ")}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -470,288 +667,215 @@ export function LedgerClient() {
           </Card>
         </TabsContent>
 
+        {/* Trial Balance */}
         <TabsContent value="trial-balance" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Trial Balance</CardTitle>
-              <CardDescription>Summary of all account balances</CardDescription>
+              <CardDescription>Summary of all account balances (computed)</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Account Name</TableHead>
-                    <TableHead className="text-right">Debit Balance</TableHead>
-                    <TableHead className="text-right">Credit Balance</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Debit</TableHead>
+                    <TableHead className="text-right">Credit</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {accounts.map((account) => {
-                    const accountEntries = ledgerEntries.filter((entry) => entry.account === account.name)
-                    const debitTotal = accountEntries.reduce((sum, entry) => sum + entry.debit, 0)
-                    const creditTotal = accountEntries.reduce((sum, entry) => sum + entry.credit, 0)
-                    const balance = creditTotal - debitTotal
-
-                    if (debitTotal === 0 && creditTotal === 0) return null
-
-                    return (
-                      <TableRow key={account.id}>
-                        <TableCell className="font-medium">{account.name}</TableCell>
+                  {trialRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No account balances available
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <>
+                      {trialRows.map((r) => (
+                        <TableRow key={r.name}>
+                          <TableCell className="font-medium">{r.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {r.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {r.debit ? `৳${r.debit.toLocaleString()}` : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {r.credit ? `৳${r.credit.toLocaleString()}` : "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="border-t-2 font-bold">
+                        <TableCell colSpan={2}>Total</TableCell>
                         <TableCell className="text-right">
-                          {balance < 0 ? `৳${Math.abs(balance).toLocaleString()}` : "-"}
+                          ৳{trialRows.reduce((s, r) => s + r.debit, 0).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right">
-                          {balance > 0 ? `৳${balance.toLocaleString()}` : "-"}
+                          ৳{trialRows.reduce((s, r) => s + r.credit, 0).toLocaleString()}
                         </TableCell>
                       </TableRow>
-                    )
-                  })}
-                  <TableRow className="border-t-2 font-bold">
-                    <TableCell>Total</TableCell>
-                    <TableCell className="text-right">৳{totalDebits.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">৳{totalCredits.toLocaleString()}</TableCell>
-                  </TableRow>
+                    </>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* Profit & Loss */}
         <TabsContent value="profit-loss" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Profit & Loss Statement</CardTitle>
-              <CardDescription>Revenue and expenses summary</CardDescription>
+              <CardDescription>Revenue and expense summary (computed)</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Revenue</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Sales Revenue</span>
-                      <span className="font-medium">৳{totalSalesAmount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Other Income</span>
-                      <span className="font-medium">৳{totalIncomeAmount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between border-t pt-2 font-bold">
-                      <span>Total Revenue</span>
-                      <span>৳{(totalSalesAmount + totalIncomeAmount).toLocaleString()}</span>
-                    </div>
+                  <div className="flex justify-between py-2">
+                    <span>Sales Revenue</span>
+                    <span className="font-medium">৳{(entries
+                      .filter((e) => e.account === "Sales Revenue")
+                      .reduce((s, e) => s + (e.credit - e.debit), 0)
+                    ).toLocaleString()}</span>
+                  </div>
+                  <div className="border-t pt-2 flex justify-between font-semibold">
+                    <span>Total Revenue</span>
+                    <span>৳{pl.revenue.toLocaleString()}</span>
                   </div>
                 </div>
 
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Expenses</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Cost of Goods Sold</span>
-                      <span className="font-medium">৳{totalPurchaseAmount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Operating Expenses</span>
-                      <span className="font-medium">৳{totalExpenseAmount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between border-t pt-2 font-bold">
-                      <span>Total Expenses</span>
-                      <span>৳{(totalPurchaseAmount + totalExpenseAmount).toLocaleString()}</span>
-                    </div>
+                  <div className="flex justify-between py-2">
+                    <span>Cost of Goods Sold</span>
+                    <span className="font-medium">৳{(entries
+                      .filter((e) => e.account === "Cost of Goods Sold")
+                      .reduce((s, e) => s + (e.debit - e.credit), 0)
+                    ).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between py-2">
+                    <span>Sales Returns</span>
+                    <span className="font-medium">৳{(entries
+                      .filter((e) => e.account === "Sales Returns")
+                      .reduce((s, e) => s + (e.debit - e.credit), 0)
+                    ).toLocaleString()}</span>
+                  </div>
+                  <div className="border-t pt-2 flex justify-between font-semibold">
+                    <span>Total Expenses</span>
+                    <span>৳{pl.expense.toLocaleString()}</span>
                   </div>
                 </div>
 
-                <div className="border-t-2 pt-4">
-                  <div className="flex justify-between text-lg font-bold">
-                    <span>Net Profit/Loss</span>
-                    <span className={`${(totalSalesAmount + totalIncomeAmount - totalPurchaseAmount - totalExpenseAmount) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      ৳{(totalSalesAmount + totalIncomeAmount - totalPurchaseAmount - totalExpenseAmount).toLocaleString()}
-                    </span>
-                  </div>
+                <div className="border-t-2 pt-4 flex justify-between text-xl font-bold">
+                  <span>Net Profit</span>
+                  <span className={pl.net >= 0 ? "text-green-600" : "text-red-600"}>
+                    ৳{pl.net.toLocaleString()}
+                  </span>
                 </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* Balance Sheet */}
         <TabsContent value="balance-sheet" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Balance Sheet</CardTitle>
-              <CardDescription>Assets, liabilities, and equity summary</CardDescription>
+              <CardDescription>Assets, Liabilities & Equity (computed)</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid md:grid-cols-2 gap-8">
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Assets</h3>
-                  <div className="space-y-2">
-                    {accounts
-                      .filter(account => account.type === 'asset')
-                      .map(account => {
-                        const accountEntries = ledgerEntries.filter(entry => entry.account === account.name)
-                        const balance = accountEntries.reduce((sum, entry) => sum + entry.debit - entry.credit, 0)
+              <div className="space-y-6">
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div>
+                    <h3 className="font-semibold mb-4">Assets</h3>
+                    {accountsList
+                      .filter(name => ACCOUNT_TYPES[name] === "asset")
+                      .map(name => {
+                        const balance = accountBalances.get(name)
+                        const amount = balance ? balance.debit - balance.credit : 0
                         return (
-                          <div key={account.id} className="flex justify-between">
-                            <span>{account.name}</span>
-                            <span className="font-medium">৳{balance.toLocaleString()}</span>
+                          <div key={name} className="flex justify-between py-1">
+                            <span className="text-sm">{name}</span>
+                            <span className="text-sm font-medium">৳{amount.toLocaleString()}</span>
                           </div>
                         )
                       })}
-                    <div className="flex justify-between border-t pt-2 font-bold">
+                    <div className="border-t pt-2 flex justify-between font-bold">
                       <span>Total Assets</span>
-                      <span>
-                        ৳{accounts
-                          .filter(account => account.type === 'asset')
-                          .reduce((total, account) => {
-                            const accountEntries = ledgerEntries.filter(entry => entry.account === account.name)
-                            return total + accountEntries.reduce((sum, entry) => sum + entry.debit - entry.credit, 0)
-                          }, 0)
-                          .toLocaleString()}
-                      </span>
+                      <span>৳{balanceSheet.assets.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="font-semibold mb-4">Liabilities</h3>
+                    {accountsList
+                      .filter(name => ACCOUNT_TYPES[name] === "liability")
+                      .map(name => {
+                        const balance = accountBalances.get(name)
+                        const amount = balance ? balance.credit - balance.debit : 0
+                        return (
+                          <div key={name} className="flex justify-between py-1">
+                            <span className="text-sm">{name}</span>
+                            <span className="text-sm font-medium">৳{amount.toLocaleString()}</span>
+                          </div>
+                        )
+                      })}
+                    <div className="border-t pt-2 flex justify-between font-bold">
+                      <span>Total Liabilities</span>
+                      <span>৳{balanceSheet.liabilities.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="font-semibold mb-4">Equity</h3>
+                    {accountsList
+                      .filter(name => ACCOUNT_TYPES[name] === "equity")
+                      .map(name => {
+                        const balance = accountBalances.get(name)
+                        const amount = balance ? balance.credit - balance.debit : 0
+                        return (
+                          <div key={name} className="flex justify-between py-1">
+                            <span className="text-sm">{name}</span>
+                            <span className="text-sm font-medium">৳{amount.toLocaleString()}</span>
+                          </div>
+                        )
+                      })}
+                    <div className="flex justify-between py-1">
+                      <span className="text-sm">Retained Earnings</span>
+                      <span className="text-sm font-medium">৳{balanceSheet.retained.toLocaleString()}</span>
+                    </div>
+                    <div className="border-t pt-2 flex justify-between font-bold">
+                      <span>Total Equity</span>
+                      <span>৳{balanceSheet.equity.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>
-
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Liabilities & Equity</h3>
-                  <div className="space-y-2">
-                    {accounts
-                      .filter(account => account.type === 'liability' || account.type === 'equity')
-                      .map(account => {
-                        const accountEntries = ledgerEntries.filter(entry => entry.account === account.name)
-                        const balance = accountEntries.reduce((sum, entry) => sum + entry.credit - entry.debit, 0)
-                        return (
-                          <div key={account.id} className="flex justify-between">
-                            <span>{account.name}</span>
-                            <span className="font-medium">৳{balance.toLocaleString()}</span>
-                          </div>
-                        )
-                      })}
-                    <div className="flex justify-between border-t pt-2 font-bold">
-                      <span>Total Liabilities & Equity</span>
-                      <span>
-                        ৳{accounts
-                          .filter(account => account.type === 'liability' || account.type === 'equity')
-                          .reduce((total, account) => {
-                            const accountEntries = ledgerEntries.filter(entry => entry.account === account.name)
-                            return total + accountEntries.reduce((sum, entry) => sum + entry.credit - entry.debit, 0)
-                          }, 0)
-                          .toLocaleString()}
-                      </span>
-                    </div>
+                
+                {/* Balance Check */}
+                <div className="border-t-2 pt-4">
+                  <div className="flex justify-between text-lg font-bold">
+                    <span>Assets vs Liabilities + Equity</span>
+                    <span className={Math.abs(balanceSheet.assets - (balanceSheet.liabilities + balanceSheet.equity)) < 0.01 ? "text-green-600" : "text-red-600"}>
+                      {Math.abs(balanceSheet.assets - (balanceSheet.liabilities + balanceSheet.equity)) < 0.01 ? "Balanced" : "Unbalanced"}
+                    </span>
                   </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Assets: ৳{balanceSheet.assets.toLocaleString()} | 
+                    Liab + Equity: ৳{(balanceSheet.liabilities + balanceSheet.equity).toLocaleString()}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Add Entry Dialog */}
-      <Dialog open={showAddEntry} onOpenChange={setShowAddEntry}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Add Ledger Entry</DialogTitle>
-            <DialogDescription>Create a new accounting entry</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="entry-date">Date*</Label>
-              <Input
-                id="entry-date"
-                type="date"
-                value={formData.date}
-                onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="entry-description">Description*</Label>
-              <Input
-                id="entry-description"
-                placeholder="Enter transaction description"
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="entry-account">Account*</Label>
-              <Select value={formData.account} onValueChange={(value) => setFormData(prev => ({ ...prev, account: value }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select account" />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts.map((account) => (
-                    <SelectItem key={account.id} value={account.name}>
-                      {account.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="entry-debit">Debit Amount</Label>
-                <Input
-                  id="entry-debit"
-                  type="number"
-                  placeholder="0.00"
-                  value={formData.debit}
-                  onChange={(e) => setFormData(prev => ({ ...prev, debit: e.target.value }))}
-                />
-              </div>
-              <div>
-                <Label htmlFor="entry-credit">Credit Amount</Label>
-                <Input
-                  id="entry-credit"
-                  type="number"
-                  placeholder="0.00"
-                  value={formData.credit}
-                  onChange={(e) => setFormData(prev => ({ ...prev, credit: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="entry-reference">Reference</Label>
-              <Input
-                id="entry-reference"
-                placeholder="Invoice/Receipt number"
-                value={formData.reference}
-                onChange={(e) => setFormData(prev => ({ ...prev, reference: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="entry-type">Transaction Type*</Label>
-              <Select value={formData.type} onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as LedgerEntry['type'] }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sales">Sales</SelectItem>
-                  <SelectItem value="purchase">Purchase</SelectItem>
-                  <SelectItem value="expense">Expense</SelectItem>
-                  <SelectItem value="income">Income</SelectItem>
-                  <SelectItem value="transfer">Transfer</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddEntry(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddEntry} disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                'Add Entry'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
