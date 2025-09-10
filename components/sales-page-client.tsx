@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/utils/supabase/component"
 import { useToast } from "@/hooks/use-toast"
+import { MainNav } from "@/components/main-nav"
 
 // FIXED: Better type definitions matching actual Supabase response
 type CustomerJoined = {
@@ -306,6 +307,7 @@ export default function SalesPageClient() {
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
+        
         <h2 className="text-3xl font-bold tracking-tight">Sales</h2>
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={loadSales} disabled={loading}>

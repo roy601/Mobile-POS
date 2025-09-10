@@ -48,6 +48,20 @@ type ProductResponse = {
   message?: string
 }
 
+type BankAccount = {
+  id: string
+  bankName: string
+  accountName: string
+  accountNumber: string
+  accountType: string
+  balance: number
+  currency: string
+  status: "active" | "inactive"
+  branch: string
+  swiftCode?: string
+  routingNumber?: string
+}
+
 export function POSClient() {
   const supabase = createClient()
   const { toast } = useToast()
@@ -62,16 +76,24 @@ export function POSClient() {
     name: "",
     model: "",
     color: "",
-    quantity: 1, // ← never changed by barcode lookup
+    quantity: 1,
     price: 0,
     discount: 0,
   })
+  
   const [paymentForm, setPaymentForm] = useState({
     method: "",
     cashReceived: 0,
     cardReceived: 0,
-    mobileBankingReceived: 0,
+    bkashReceived: 0,
+    nagadReceived: 0,
+    rocketReceived: 0,
+    upayReceived: 0,
     bankTransferReceived: 0,
+    due: 0,
+    cardBank: "",
+    bankTransferBank: "",
+    mobileBankingMethod: ""
   })
 
   const [showCalculator, setShowCalculator] = useState(false)
@@ -79,18 +101,127 @@ export function POSClient() {
   const [showScanner, setShowScanner] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
+  // Sample bank accounts - in a real app, these would come from a database
+  const [bankAccounts] = useState<BankAccount[]>([
+    {
+      id: "BANK-001",
+      bankName: "Dutch-Bangla Bank Limited",
+      accountName: "Mobile Shop Business Account",
+      accountNumber: "1234567890123",
+      accountType: "Current Account",
+      balance: 250000,
+      currency: "BDT",
+      status: "active",
+      branch: "Dhanmondi Branch",
+      swiftCode: "DBBLBDDHXXX",
+      routingNumber: "090261234",
+    },
+    {
+      id: "BANK-002",
+      bankName: "Islami Bank Bangladesh Limited",
+      accountName: "Mobile Shop Savings",
+      accountNumber: "2345678901234",
+      accountType: "Savings Account",
+      balance: 150000,
+      currency: "BDT",
+      status: "active",
+      branch: "Gulshan Branch",
+      swiftCode: "IBBLBDDHXXX",
+      routingNumber: "125261234",
+    },
+    {
+      id: "BANK-003",
+      bankName: "BRAC Bank Limited",
+      accountName: "Business Account",
+      accountNumber: "3456789012345",
+      accountType: "Current Account",
+      balance: 180000,
+      currency: "BDT",
+      status: "active",
+      branch: "Banani Branch",
+      swiftCode: "BRAKBDDHXXX",
+      routingNumber: "060261234",
+    },
+  ])
+
   const saleStarted = currentSaleId != null
 
-  // Totals
+  // Totals with improved due logic
   const subtotal = cartItems.reduce((sum, item) => sum + item.quantity * item.price, 0)
-  const totalDiscount = cartItems.reduce((sum, item) => sum + (item.quantity * item.price * item.discount) / 100, 0)
-  const total = subtotal - totalDiscount + (customer?.dues || 0)
+  const totalDiscount = cartItems.reduce((sum, item) => sum + (item.quantity * item.discount), 0)
+  const netAmount = subtotal - totalDiscount
+  const previousDues = customer?.dues || 0
+  const total = netAmount + previousDues
+  
   const totalReceived =
     paymentForm.cashReceived +
     paymentForm.cardReceived +
-    paymentForm.mobileBankingReceived +
-    paymentForm.bankTransferReceived
-  const change = totalReceived - total
+    paymentForm.bkashReceived +
+    paymentForm.nagadReceived +
+    paymentForm.rocketReceived +
+    paymentForm.upayReceived +
+    paymentForm.bankTransferReceived;
+  
+  // Updated due calculation logic
+  const totalPaid = totalReceived + paymentForm.due
+  const change = totalPaid > total ? totalPaid - total : 0
+  const remainingDue = Math.max(0, total - totalReceived)
+  const newDuesForCustomer = remainingDue > 0 ? remainingDue : 0
+
+  // Check if payment method requires bank selection
+  const requiresBankSelection = () => {
+    return paymentForm.method === "card" || paymentForm.method === "bank-transfer"
+  }
+
+  // Check if payment method should show amount input immediately
+  const showsAmountImmediately = () => {
+    return ["cash", "mobile-banking"].includes(paymentForm.method)
+  }
+
+  // Handle payment method change
+  const handlePaymentMethodChange = (method: string) => {
+    setPaymentForm({
+      ...paymentForm,
+      method,
+      cashReceived: 0,
+      cardReceived: 0,
+      bkashReceived: 0,
+      nagadReceived: 0,
+      rocketReceived: 0,
+      upayReceived: 0,
+      bankTransferReceived: 0,
+      due: 0,
+      cardBank: "",
+      bankTransferBank: "",
+      mobileBankingMethod: ""
+    })
+  }
+
+  // Handle payment amount changes with auto-calculation
+  const handlePaymentChange = (field: keyof typeof paymentForm, value: number | string) => {
+    const updatedPayment = { ...paymentForm, [field]: value }
+    
+    // For number fields, recalculate due amount
+    if (typeof value === 'number') {
+      const newTotalReceived = 
+        (field === 'cashReceived' ? value : updatedPayment.cashReceived) +
+        (field === 'cardReceived' ? value : updatedPayment.cardReceived) +
+        (field === 'bkashReceived' ? value : updatedPayment.bkashReceived) +
+        (field === 'nagadReceived' ? value : updatedPayment.nagadReceived) +
+        (field === 'rocketReceived' ? value : updatedPayment.rocketReceived) +
+        (field === 'upayReceived' ? value : updatedPayment.upayReceived) +
+        (field === 'bankTransferReceived' ? value : updatedPayment.bankTransferReceived)
+      
+      const autoCalculatedDue = Math.max(0, total - newTotalReceived)
+      
+      setPaymentForm({
+        ...updatedPayment,
+        due: field === 'due' ? value : autoCalculatedDue
+      })
+    } else {
+      setPaymentForm(updatedPayment)
+    }
+  }
 
   // ---- Supabase helpers
 
@@ -120,6 +251,26 @@ export function POSClient() {
     } catch (error) {
       console.error("Error fetching product:", error)
       return { success: false, message: "Failed to fetch product from database" }
+    }
+  }
+
+  // ---- Update customer dues
+  const updateCustomerDues = async (customerId: number, newDuesAmount: number) => {
+    try {
+      const { error } = await supabase
+        .from("customers")
+        .update({ dues: newDuesAmount })
+        .eq("id", customerId)
+      
+      if (error) throw error
+      
+      // Update local customer state
+      if (customer && customer.id === customerId) {
+        setCustomer({ ...customer, dues: newDuesAmount })
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Failed to update customer dues"
+      throw new Error(errorMsg)
     }
   }
 
@@ -184,9 +335,11 @@ export function POSClient() {
   <div class="totals">
     <div><span>Subtotal</span><span>৳${Number(sale?.subtotal || 0).toFixed(2)}</span></div>
     <div><span>Discount</span><span>-৳${Number(sale?.total_discount || 0).toFixed(2)}</span></div>
+    ${sale?.previous_dues > 0 ? `<div><span>Previous Dues</span><span>৳${Number(sale?.previous_dues || 0).toFixed(2)}</span></div>` : ''}
     <div style="font-weight:bold;"><span>Grand Total</span><span>৳${Number(sale?.total_amount || 0).toFixed(2)}</span></div>
     <div><span>Received</span><span>৳${Number(sale?.total_received || 0).toFixed(2)}</span></div>
-    <div><span>Change</span><span>৳${Number(sale?.change_amount || 0).toFixed(2)}</span></div>
+    ${sale?.due_amount > 0 ? `<div style="color:red;"><span>Remaining Due</span><span>৳${Number(sale?.due_amount || 0).toFixed(2)}</span></div>` : ''}
+    ${sale?.change_amount > 0 ? `<div><span>Change</span><span>৳${Number(sale?.change_amount || 0).toFixed(2)}</span></div>` : ''}
   </div>
 
   <div style="clear:both; margin-top:24px;">
@@ -292,7 +445,7 @@ export function POSClient() {
         const { saleId, invoiceNumber: inv } = await startSaleForCustomer(customer as Required<Customer>)
         toast({ title: "Sale Started", description: `Sale #${saleId}${inv ? ` • ${inv}` : ""}` })
       } catch (e: any) {
-        toast({ title: "Couldn’t start sale", description: e?.message ?? "start_sale failed", variant: "destructive" })
+        toast({ title: "Couldn't start sale", description: e?.message ?? "start_sale failed", variant: "destructive" })
         return
       }
     }
@@ -345,7 +498,20 @@ export function POSClient() {
 
   const clearCart = () => {
     setCartItems([])
-    setPaymentForm({ method: "", cashReceived: 0, cardReceived: 0, mobileBankingReceived: 0, bankTransferReceived: 0 })
+    setPaymentForm({ 
+      method: "", 
+      cashReceived: 0, 
+      cardReceived: 0, 
+      bkashReceived: 0,
+      nagadReceived: 0,
+      rocketReceived: 0,
+      upayReceived: 0,
+      bankTransferReceived: 0, 
+      due: 0,
+      cardBank: "",
+      bankTransferBank: "",
+      mobileBankingMethod: ""
+    })
   }
 
   const newSale = async () => {
@@ -359,6 +525,38 @@ export function POSClient() {
 
   const completeSale = async () => {
     if (!saleStarted || cartItems.length === 0) return
+    
+    // Validation: ensure payment is sufficient or due is acknowledged
+    if (totalReceived < total && remainingDue === 0) {
+      toast({
+        title: "Insufficient Payment",
+        description: `Payment received (৳${totalReceived.toFixed(2)}) is less than total (৳${total.toFixed(2)}). Please add remaining amount to due or increase payment.`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Validation for card/bank transfer methods
+    if ((paymentForm.method === "card" || paymentForm.method === "bank-transfer") && 
+        !paymentForm.cardBank && !paymentForm.bankTransferBank) {
+      toast({
+        title: "Bank Selection Required",
+        description: "Please select a bank for card or bank transfer payment.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Validation for mobile banking method
+    if (paymentForm.method === "mobile-banking" && !paymentForm.mobileBankingMethod) {
+      toast({
+        title: "Mobile Banking Method Required",
+        description: "Please select a mobile banking method.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsLoading(true)
     try {
       // Process each cart item
@@ -394,24 +592,43 @@ export function POSClient() {
         return
       }
 
-      // Update sale totals and status
+      // Determine the final payment method for the database
+      let finalPaymentMethod = paymentForm.method;
+      if (paymentForm.method === "mobile-banking") {
+        finalPaymentMethod = paymentForm.mobileBankingMethod;
+      }
+
+      // Update sale totals and status with improved due handling
       const { error: saleError } = await supabase
         .from("sales")
         .update({
           subtotal,
           total_discount: totalDiscount,
+          previous_dues: previousDues,
+          net_amount: netAmount,
           total_amount: total,
           cash_received: paymentForm.cashReceived,
           card_received: paymentForm.cardReceived,
-          mobile_banking_received: paymentForm.mobileBankingReceived,
+          bkash_received: paymentForm.bkashReceived,
+          nagad_received: paymentForm.nagadReceived,
+          rocket_received: paymentForm.rocketReceived,
+          upay_received: paymentForm.upayReceived,
           bank_transfer_received: paymentForm.bankTransferReceived,
           total_received: totalReceived,
+          due_amount: remainingDue,
           change_amount: change,
-          payment_method: paymentForm.method,
+          payment_method: finalPaymentMethod,
+          card_bank: paymentForm.cardBank,
+          bank_transfer_bank: paymentForm.bankTransferBank,
           status: "completed",
         })
         .eq("id", currentSaleId)
       if (saleError) throw saleError
+
+      // Update customer dues if there's remaining due or previous dues were cleared
+      if (customer?.id) {
+        await updateCustomerDues(customer.id, newDuesForCustomer)
+      }
 
       // Ensure invoice number is present
       let inv = invoiceNumber
@@ -425,7 +642,14 @@ export function POSClient() {
         setInvoiceNumber(inv)
       }
 
-      toast({ title: "Sale Completed", description: `Invoice: ${inv}` })
+      const completionMessage = remainingDue > 0 
+        ? `Sale completed with ৳${remainingDue.toFixed(2)} due remaining`
+        : "Sale completed successfully"
+      
+      toast({ 
+        title: "Sale Completed", 
+        description: `Invoice: ${inv} • ${completionMessage}`
+      })
 
       // Open printable receipt
       if (currentSaleId) await openPrintableReceipt(currentSaleId)
@@ -433,8 +657,28 @@ export function POSClient() {
       // Reset for next transaction
       await newSale()
     } catch (error) {
-      console.error("Error completing sale:", error)
-      toast({ title: "Error", description: "Failed to complete sale", variant: "destructive" })
+      const errorMessage = error instanceof Error ? error.message : "Failed to complete sale"
+      
+      // More specific error handling
+      if (errorMessage.includes("column") && errorMessage.includes("does not exist")) {
+        toast({ 
+          title: "Database Schema Error", 
+          description: "Some database columns are missing. Please check your sales table schema.",
+          variant: "destructive" 
+        })
+      } else if (errorMessage.includes("permission")) {
+        toast({ 
+          title: "Permission Error", 
+          description: "Insufficient permissions to complete sale. Contact administrator.",
+          variant: "destructive" 
+        })
+      } else {
+        toast({ 
+          title: "Sale Error", 
+          description: `Sale may have partially completed. Error: ${errorMessage}`,
+          variant: "destructive" 
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -445,7 +689,14 @@ export function POSClient() {
     try {
       const { error } = await supabase
         .from("sales")
-        .update({ subtotal, total_discount: totalDiscount, total_amount: total, status: "held" })
+        .update({ 
+          subtotal, 
+          total_discount: totalDiscount, 
+          previous_dues: previousDues,
+          net_amount: netAmount,
+          total_amount: total, 
+          status: "held" 
+        })
         .eq("id", currentSaleId)
       if (error) throw error
       toast({ title: "Sale Held", description: "Sale held successfully!" })
@@ -490,7 +741,7 @@ export function POSClient() {
       const { data, error } = await supabase.rpc("upsert_customer", {
         p_name: customerName,
         p_phone: customerPhone || null,
-        p_email: customerEmail || null,
+        p_email: customerPhone || null,
       })
       if (error) throw new Error(error.message || "upsert_customer failed")
       if (!data?.success || !data?.customer?.id) throw new Error("upsert_customer returned no customer id")
@@ -568,7 +819,7 @@ export function POSClient() {
                               toast({ title: "Sale Started", description: `Sale #${saleId}${inv ? ` • ${inv}` : ""}` })
                             } catch (e: any) {
                               toast({
-                                title: "Couldn’t start sale",
+                                title: "Couldn't start sale",
                                 description: e?.message ?? "start_sale failed",
                                 variant: "destructive",
                               })
@@ -639,7 +890,7 @@ export function POSClient() {
                   id="barcode"
                   placeholder="Scan or enter barcode"
                   value={productForm.barcode}
-                  onChange={(e) => handleBarcodeInput(e.target.value)} // no lookup on type
+                  onChange={(e) => handleBarcodeInput(e.target.value)}
                   disabled={isLoading || !saleStarted}
                 />
               </div>
@@ -737,7 +988,7 @@ export function POSClient() {
                 />
               </div>
               <div>
-                <Label htmlFor="discount">Discount (%)</Label>
+                <Label htmlFor="discount">Discount (TK)</Label>
                 <Input
                   id="discount"
                   type="number"
@@ -833,7 +1084,7 @@ export function POSClient() {
               </div>
             </div>
 
-            {/* Totals */}
+            {/* Totals with improved due display */}
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
@@ -843,10 +1094,14 @@ export function POSClient() {
                 <span>Discount:</span>
                 <span>-৳{totalDiscount.toFixed(2)}</span>
               </div>
-              {customer?.dues && customer.dues > 0 && (
-                <div className="flex justify-between text-red-600">
+              <div className="flex justify-between">
+                <span>Net Amount:</span>
+                <span>৳{netAmount.toFixed(2)}</span>
+              </div>
+              {previousDues > 0 && (
+                <div className="flex justify-between text-orange-600">
                   <span>Previous Dues:</span>
-                  <span>৳{customer.dues.toFixed(2)}</span>
+                  <span>৳{previousDues.toFixed(2)}</span>
                 </div>
               )}
               <Separator />
@@ -861,7 +1116,7 @@ export function POSClient() {
               <Label>Payment Method</Label>
               <Select
                 value={paymentForm.method}
-                onValueChange={(value) => setPaymentForm({ ...paymentForm, method: value })}
+                onValueChange={handlePaymentMethodChange}
                 disabled={!saleStarted}
               >
                 <SelectTrigger>
@@ -870,74 +1125,299 @@ export function POSClient() {
                 <SelectContent>
                   <SelectItem value="cash">Cash</SelectItem>
                   <SelectItem value="card">Credit/Debit Card</SelectItem>
-                  <SelectItem value="bkash">bKash</SelectItem>
-                  <SelectItem value="nagad">Nagad</SelectItem>
-                  <SelectItem value="rocket">Rocket</SelectItem>
-                  <SelectItem value="upay">Upay</SelectItem>
+                  <SelectItem value="mobile-banking">Mobile Banking</SelectItem>
                   <SelectItem value="bank-transfer">Bank Transfer</SelectItem>
                   <SelectItem value="split">Split Payment</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Mobile Banking Method Selection */}
+            {paymentForm.method === "mobile-banking" && (
+              <div>
+                <Label htmlFor="mobile-banking-method">Mobile Banking Method</Label>
+                <Select
+                  value={paymentForm.mobileBankingMethod}
+                  onValueChange={(value) => handlePaymentChange("mobileBankingMethod", value)}
+                  disabled={!saleStarted}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mobile banking" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bkash">bKash</SelectItem>
+                    <SelectItem value="nagad">Nagad</SelectItem>
+                    <SelectItem value="rocket">Rocket</SelectItem>
+                    <SelectItem value="upay">Upay</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Bank Selection for Card and Bank Transfer */}
+            {requiresBankSelection() && (
+              <div>
+                <Label htmlFor="bank-select">
+                  {paymentForm.method === "card" ? "Select Card Bank" : "Select Bank for Transfer"}
+                </Label>
+                <Select
+                  value={paymentForm.method === "card" ? paymentForm.cardBank : paymentForm.bankTransferBank}
+                  onValueChange={(value) => {
+                    if (paymentForm.method === "card") {
+                      handlePaymentChange("cardBank", value)
+                    } else {
+                      handlePaymentChange("bankTransferBank", value)
+                    }
+                  }}
+                  disabled={!saleStarted}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select bank" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bankAccounts.map((bank) => (
+                      <SelectItem key={bank.id} value={bank.bankName}>
+                        {bank.bankName} - {bank.accountNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* Payment Amounts */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label htmlFor="cash-received">Cash</Label>
-                <Input
-                  id="cash-received"
-                  type="number"
-                  placeholder="0.00"
-                  value={paymentForm.cashReceived}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, cashReceived: Number.parseFloat(e.target.value) || 0 })}
-                  disabled={!saleStarted}
-                />
+            {paymentForm.method === "split" ? (
+              // Split Payment - Show all payment methods
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="cash-received">Cash</Label>
+                    <Input
+                      id="cash-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.cashReceived}
+                      onChange={(e) => handlePaymentChange('cashReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="card-received">Card</Label>
+                    <div className="space-y-2">
+                      <Select
+                        value={paymentForm.cardBank}
+                        onValueChange={(value) => handlePaymentChange("cardBank", value)}
+                        disabled={!saleStarted}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {bankAccounts.map((bank) => (
+                            <SelectItem key={bank.id} value={bank.bankName}>
+                              {bank.bankName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        id="card-received"
+                        type="number"
+                        placeholder="0.00"
+                        value={paymentForm.cardReceived}
+                        onChange={(e) => handlePaymentChange('cardReceived', Number.parseFloat(e.target.value) || 0)}
+                        disabled={!saleStarted || !paymentForm.cardBank}
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="bkash-received">bKash</Label>
+                    <Input
+                      id="bkash-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.bkashReceived}
+                      onChange={(e) => handlePaymentChange('bkashReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="nagad-received">Nagad</Label>
+                    <Input
+                      id="nagad-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.nagadReceived}
+                      onChange={(e) => handlePaymentChange('nagadReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="rocket-received">Rocket</Label>
+                    <Input
+                      id="rocket-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.rocketReceived}
+                      onChange={(e) => handlePaymentChange('rocketReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="upay-received">Upay</Label>
+                    <Input
+                      id="upay-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.upayReceived}
+                      onChange={(e) => handlePaymentChange('upayReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                </div>
+                
+                <div>
+                  <Label htmlFor="bank-transfer-received">Bank Transfer</Label>
+                  <div className="space-y-2">
+                    <Select
+                      value={paymentForm.bankTransferBank}
+                      onValueChange={(value) => handlePaymentChange("bankTransferBank", value)}
+                      disabled={!saleStarted}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select bank" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bankAccounts.map((bank) => (
+                          <SelectItem key={bank.id} value={bank.bankName}>
+                            {bank.bankName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      id="bank-transfer-received"
+                      type="number"
+                      placeholder="0.00"
+                      value={paymentForm.bankTransferReceived}
+                      onChange={(e) => handlePaymentChange('bankTransferReceived', Number.parseFloat(e.target.value) || 0)}
+                      disabled={!saleStarted || !paymentForm.bankTransferBank}
+                    />
+                  </div>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="card-received">Card</Label>
-                <Input
-                  id="card-received"
-                  type="number"
-                  placeholder="0.00"
-                  value={paymentForm.cardReceived}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, cardReceived: Number.parseFloat(e.target.value) || 0 })}
-                  disabled={!saleStarted}
-                />
-              </div>
-              <div>
-                <Label htmlFor="mobile-banking">Mobile Banking</Label>
-                <Input
-                  id="mobile-banking"
-                  type="number"
-                  placeholder="0.00"
-                  value={paymentForm.mobileBankingReceived}
-                  onChange={(e) =>
-                    setPaymentForm({ ...paymentForm, mobileBankingReceived: Number.parseFloat(e.target.value) || 0 })
-                  }
-                  disabled={!saleStarted}
-                />
-              </div>
-              <div>
-                <Label htmlFor="bank-transfer">Bank Transfer</Label>
-                <Input
-                  id="bank-transfer"
-                  type="number"
-                  placeholder="0.00"
-                  value={paymentForm.bankTransferReceived}
-                  onChange={(e) =>
-                    setPaymentForm({ ...paymentForm, bankTransferReceived: Number.parseFloat(e.target.value) || 0 })
-                  }
-                  disabled={!saleStarted}
-                />
-              </div>
+            ) : (
+              // Single Payment Method
+              <>
+                {showsAmountImmediately() && (
+                  <div>
+                    <Label htmlFor="payment-amount">
+                      {paymentForm.method === "cash" 
+                        ? "Cash Amount" 
+                        : `Mobile Banking (${paymentForm.mobileBankingMethod}) Amount`}
+                    </Label>
+                    <Input
+                      id="payment-amount"
+                      type="number"
+                      placeholder="0.00"
+                      value={
+                        paymentForm.method === "cash" ? paymentForm.cashReceived :
+                        paymentForm.bkashReceived + paymentForm.nagadReceived + 
+                        paymentForm.rocketReceived + paymentForm.upayReceived
+                      }
+                      onChange={(e) => {
+                        const value = Number.parseFloat(e.target.value) || 0
+                        if (paymentForm.method === "cash") {
+                          handlePaymentChange('cashReceived', value)
+                        } else if (paymentForm.method === "mobile-banking") {
+                          // Distribute the amount to the selected mobile banking method
+                          const method = paymentForm.mobileBankingMethod
+                          if (method === "bkash") handlePaymentChange('bkashReceived', value)
+                          else if (method === "nagad") handlePaymentChange('nagadReceived', value)
+                          else if (method === "rocket") handlePaymentChange('rocketReceived', value)
+                          else if (method === "upay") handlePaymentChange('upayReceived', value)
+                        }
+                      }}
+                      disabled={!saleStarted || (paymentForm.method === "mobile-banking" && !paymentForm.mobileBankingMethod)}
+                    />
+                  </div>
+                )}
+                
+                {requiresBankSelection() && (paymentForm.cardBank || paymentForm.bankTransferBank) && (
+                  <div>
+                    <Label htmlFor="payment-amount">
+                      {paymentForm.method === "card" ? "Card" : "Bank Transfer"} Amount
+                    </Label>
+                    <Input
+                      id="payment-amount"
+                      type="number"
+                      placeholder="0.00"
+                      value={
+                        paymentForm.method === "card" ? paymentForm.cardReceived :
+                        paymentForm.bankTransferReceived
+                      }
+                      onChange={(e) => {
+                        const value = Number.parseFloat(e.target.value) || 0
+                        if (paymentForm.method === "card") {
+                          handlePaymentChange('cardReceived', value)
+                        } else {
+                          handlePaymentChange('bankTransferReceived', value)
+                        }
+                      }}
+                      disabled={!saleStarted}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Due Amount */}
+            <div>
+              <Label htmlFor="due">Due Amount</Label>
+              <Input
+                id="due"
+                type="number"
+                placeholder="0.00"
+                value={paymentForm.due}
+                onChange={(e) => handlePaymentChange('due', Number.parseFloat(e.target.value) || 0)}
+                disabled={!saleStarted}
+                className={remainingDue > 0 ? "bg-yellow-50 border-yellow-300" : ""}
+              />
+              {remainingDue > 0 && (
+                <p className="text-xs text-yellow-700 mt-1">
+                  Suggested due: ৳{remainingDue.toFixed(2)}
+                </p>
+              )}
             </div>
 
-            {/* Change */}
-            <div className="bg-muted p-3 rounded-lg">
-              <div className="flex justify-between font-bold">
-                <span>Change to Return:</span>
-                <span className={change >= 0 ? "text-green-600" : "text-red-600"}>৳{change.toFixed(2)}</span>
+            {/* Payment Summary */}
+            <div className="bg-muted p-3 rounded-lg space-y-1">
+              <div className="flex justify-between text-sm">
+                <span>Total Received:</span>
+                <span>৳{totalReceived.toFixed(2)}</span>
               </div>
+              {remainingDue > 0 ? (
+                <div className="flex justify-between font-bold text-orange-600">
+                  <span>Remaining Due:</span>
+                  <span>৳{remainingDue.toFixed(2)}</span>
+                </div>
+              ) : change > 0 ? (
+                <div className="flex justify-between font-bold text-green-600">
+                  <span>Change to Return:</span>
+                  <span>৳{change.toFixed(2)}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between font-bold text-green-600">
+                  <span>Fully Paid</span>
+                  <span>✓</span>
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -946,7 +1426,7 @@ export function POSClient() {
                 className="w-full bg-blue-600 hover:bg-blue-700"
                 size="lg"
                 onClick={completeSale}
-                disabled={!saleStarted || cartItems.length === 0 || totalReceived < total || isLoading}
+                disabled={!saleStarted || cartItems.length === 0 || isLoading}
               >
                 <CreditCard className="mr-2 h-5 w-5" />
                 {isLoading ? "Processing..." : "Complete Sale"}
@@ -999,6 +1479,7 @@ export function POSClient() {
         </CardContent>
       </Card>
 
+
       {/* Dialogs */}
       <POSCalculator open={showCalculator} onOpenChange={setShowCalculator} />
       <CustomerSearch
@@ -1010,7 +1491,7 @@ export function POSClient() {
       <ProductScanner
         open={showScanner}
         onOpenChange={setShowScanner}
-        onScanResult={(result) => lookupByBarcode(result)} // scanner triggers lookup
+        onScanResult={(result) => lookupByBarcode(result)}
       />
     </div>
   )

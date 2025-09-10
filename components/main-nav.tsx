@@ -10,7 +10,7 @@ export function MainNav({ className, ...props }: React.HTMLAttributes<HTMLElemen
 
   const navItems = [
     {
-      href: "/",
+      href: "/data-sync",
       label: "Data Sync",
     },
     {
@@ -53,6 +53,7 @@ export function MainNav({ className, ...props }: React.HTMLAttributes<HTMLElemen
       href: "/settings",
       label: "Settings",
     },
+    
   ]
 
   return (

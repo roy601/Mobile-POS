@@ -1,6 +1,6 @@
 "use client"
 
-import { use, useState } from "react"
+import { useState } from "react"
 import { Save, X, Plus, Minus, Camera, QrCode, Barcode } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -18,41 +18,38 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { createClient } from "@/utils/supabase/component";
-import { id } from "date-fns/locale"
+import { createClient } from "@/utils/supabase/component"
 
 const supabase = createClient();
-
 
 type ColorVariant = {
   id: string
   color: string
   quantity: number
-  imei?: string
-  barcode: string
+  barcodes: string[]  // Changed from single barcode to array of barcodes
 }
 
 export function AddProductForm() {
-
   const [showAddSupplier, setShowAddSupplier] = useState(false)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [selectedSupplier, setSelectedSupplier] = useState("")
   const [productName, setProductName] = useState("")
   const [modelNumber, setModelNumber] = useState("")
   const [currentVariantId, setCurrentVariantId] = useState("")
+  const [currentBarcodeIndex, setCurrentBarcodeIndex] = useState(0)
   const [category, setCategory] = useState("")
   const [brand, setBrand] = useState("")
   const [costPrice, setCostPrice] = useState("")
   const [sellPrice, setSellPrice] = useState("")
   const [description, setDescription] = useState("")
   const [colorVariants, setColorVariants] = useState<ColorVariant[]>([
-    { id: "1", color: "", quantity: 0, imei: "", barcode: "" },
+    { id: "1", color: "", quantity: 0, barcodes: [] },
   ])
   const { toast } = useToast()
 
   const addColorVariant = () => {
-    const newId = (colorVariants.length + 1).toString()
-    setColorVariants([...colorVariants, { id: newId, color: "", quantity: 0, imei: "", barcode: "" }])
+    const newId = (Date.now()).toString()
+    setColorVariants([...colorVariants, { id: newId, color: "", quantity: 0, barcodes: [] }])
   }
 
   const removeColorVariant = (id: string) => {
@@ -61,23 +58,68 @@ export function AddProductForm() {
     }
   }
 
-  const updateColorVariant = (id: string, field: keyof ColorVariant, value: string | number) => {
-    setColorVariants(colorVariants.map((variant) => (variant.id === id ? { ...variant, [field]: value } : variant)))
+  const updateColorVariant = (id: string, field: keyof Omit<ColorVariant, 'barcodes'>, value: string | number) => {
+    setColorVariants(colorVariants.map((variant) => 
+      variant.id === id ? { ...variant, [field]: value } : variant
+    ))
   }
 
-  const openBarcodeScanner = (variantId: string) => {
+  const updateColorVariantBarcodes = (id: string, barcodes: string[]) => {
+    setColorVariants(colorVariants.map((variant) => 
+      variant.id === id ? { ...variant, barcodes } : variant
+    ))
+  }
+
+  const updateIndividualBarcode = (variantId: string, index: number, value: string) => {
+    setColorVariants(colorVariants.map(variant => {
+      if (variant.id === variantId) {
+        const newBarcodes = [...variant.barcodes]
+        newBarcodes[index] = value
+        return { ...variant, barcodes: newBarcodes }
+      }
+      return variant
+    }))
+  }
+
+  const generateBarcodesForVariant = (variantId: string, quantity: number) => {
+    setColorVariants(colorVariants.map(variant => {
+      if (variant.id === variantId) {
+        // If we're increasing quantity, add empty barcode slots
+        if (quantity > variant.barcodes.length) {
+          const newBarcodes = [...variant.barcodes]
+          while (newBarcodes.length < quantity) {
+            newBarcodes.push("")
+          }
+          return { ...variant, quantity, barcodes: newBarcodes }
+        } 
+        // If decreasing quantity, remove extra barcodes
+        else if (quantity < variant.barcodes.length) {
+          return { 
+            ...variant, 
+            quantity, 
+            barcodes: variant.barcodes.slice(0, quantity) 
+          }
+        }
+      }
+      return variant
+    }))
+  }
+
+  const openBarcodeScanner = (variantId: string, barcodeIndex: number) => {
     setCurrentVariantId(variantId)
+    setCurrentBarcodeIndex(barcodeIndex)
     setShowBarcodeScanner(true)
   }
 
   const handleBarcodeScanned = (scannedBarcode: string) => {
     if (currentVariantId) {
-      updateColorVariant(currentVariantId, "barcode", scannedBarcode)
+      updateIndividualBarcode(currentVariantId, currentBarcodeIndex, scannedBarcode)
       setShowBarcodeScanner(false)
       setCurrentVariantId("")
+      setCurrentBarcodeIndex(0)
       toast({
         title: "Barcode Captured",
-        description: `Barcode ${scannedBarcode} has been saved for this product variant`,
+        description: `Barcode ${scannedBarcode} has been saved`,
       })
     }
   }
@@ -91,151 +133,153 @@ export function AddProductForm() {
   }
 
   const handleSaveProduct = async () => {
-  // --- VALIDATIONS FIRST ---
-  if (!productName || !modelNumber) {
-    toast({ title: "Error", description: "Please fill in product name and model number", variant: "destructive" })
-    return
-  }
+    // Validation
+    if (!productName || !modelNumber) {
+      toast({ title: "Error", description: "Please fill in product name and model number", variant: "destructive" })
+      return
+    }
 
-  const validVariants = colorVariants.filter((v) => v.color && v.quantity > 0)
-  const totalQuantity = validVariants.reduce((sum, v) => sum + v.quantity, 0)
+    const validVariants = colorVariants.filter((v) => v.color && v.quantity > 0)
+    const totalQuantity = validVariants.reduce((sum, v) => sum + v.quantity, 0)
 
-  if (totalQuantity === 0) {
-    toast({ title: "Error", description: "Please add at least one color variant with quantity", variant: "destructive" })
-    return
-  }
+    if (totalQuantity === 0) {
+      toast({ title: "Error", description: "Please add at least one color variant with quantity", variant: "destructive" })
+      return
+    }
 
-  // Must have barcodes for all valid variants
-  const variantsWithoutBarcode = validVariants.filter((v) => !v.barcode?.trim())
-  if (variantsWithoutBarcode.length > 0) {
-    toast({
-      title: "Missing barcodes",
-      description: "Please scan barcodes for all variants.",
-      variant: "destructive",
-    })
-    return
-  }
-
-  if (!category || !costPrice || !sellPrice) {
-    toast({
-      title: "Error",
-      description: "Please fill in all required fields (category, cost price, selling price)",
-      variant: "destructive",
-    })
-    return
-  }
-
-  // ---  A) CHECK DUPES INSIDE THE FORM ---
-  const inputBarcodes = validVariants.map((v) => v.barcode.trim())
-  const dupesInForm = inputBarcodes.filter((b, i) => inputBarcodes.indexOf(b) !== i)
-  if (dupesInForm.length > 0) {
-    const uniq = Array.from(new Set(dupesInForm))
-    toast({
-      title: "Duplicate barcodes in form",
-      description: `These barcodes are repeated: ${uniq.join(", ")}`,
-      variant: "destructive",
-    })
-    return
-  }
-
-  // ---  B) CHECK DUPES AGAINST DB BEFORE INSERT ---
-  try {
-    const { data: existing, error: checkErr } = await supabase
-      .from("color_variants")
-      .select("barcode")
-      .in("barcode", inputBarcodes)
-
-    if (checkErr) {
-      // If this fails, we still can rely on DB PK during insert, but we'll warn.
-      console.warn("Preflight barcode check failed:", checkErr)
-    } else if (existing && existing.length > 0) {
-      const found = existing.map((r: any) => r.barcode)
+    // Check if all barcodes are filled
+    const missingBarcodes = validVariants.some(variant => 
+      variant.barcodes.some(barcode => !barcode.trim())
+    )
+    
+    if (missingBarcodes) {
       toast({
-        title: "Duplicate barcodes in database",
-        description: `Already used: ${found.join(", ")}`,
+        title: "Missing barcodes",
+        description: "Please scan barcodes for all product units.",
         variant: "destructive",
       })
       return
     }
 
-    // --- CREATE PURCHASE FIRST ---
-    const { data: purchaseData, error: purchaseError } = await supabase
-      .from("purchases")
-      .insert([{
-        product_name: productName,
-        model_number: modelNumber,
-        category,
-        brand,
-        supplier: selectedSupplier || null,
-        cost_price: parseFloat(costPrice),
-        sale_price: parseFloat(sellPrice),
-        description: description || null
-      }])
-      .select("id")
-      .single()
-
-    if (purchaseError) {
-      console.error("Purchase insert failed:", purchaseError)
-      toast({ title: "Database Error", description: `Failed to save product: ${purchaseError.message}`, variant: "destructive" })
+    if (!category || !costPrice || !sellPrice) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields (category, cost price, selling price)",
+        variant: "destructive",
+      })
       return
     }
 
-    const purchaseId = purchaseData?.id
-    if (!purchaseId) {
-      toast({ title: "Database Error", description: "Failed to save product: No purchase ID returned", variant: "destructive" })
+    // Check for duplicate barcodes
+    const allBarcodes = validVariants.flatMap(v => v.barcodes)
+    const uniqueBarcodes = new Set(allBarcodes)
+    
+    if (allBarcodes.length !== uniqueBarcodes.size) {
+      toast({
+        title: "Duplicate barcodes",
+        description: "Please ensure all barcodes are unique.",
+        variant: "destructive",
+      })
       return
     }
 
-    // --- INSERT VARIANTS (may still hit race-condition PK violation) ---
-    const variantInserts = validVariants.map((v) => ({
-      barcode: v.barcode.trim(),
-      purchase_id: purchaseId,
-      color: v.color,
-      quantity: v.quantity,
-      imei: v.imei || null
-    }))
+    try {
+      // Check for existing barcodes in database
+      const { data: existing, error: checkErr } = await supabase
+        .from("color_variants")
+        .select("barcode")
+        .in("barcode", allBarcodes)
 
-    const { error: variantError } = await supabase.from("color_variants").insert(variantInserts)
+      if (checkErr) {
+        console.error("Barcode check error:", checkErr)
+        toast({ 
+          title: "Database Error", 
+          description: "Failed to check barcode uniqueness", 
+          variant: "destructive" 
+        })
+        return
+      }
 
-    if (variantError) {
-      // Handle unique violation nicely
-      const msg = (variantError as any)?.message || ""
-      const isUnique = (variantError as any)?.code === "23505" || /duplicate key|unique/i.test(msg)
-      if (isUnique) {
-        // Try to pull the conflicting barcode from the message
-        const conflict = inputBarcodes.find((b) => msg.includes(b)) || "one of the barcodes"
+      if (existing && existing.length > 0) {
+        const found = existing.map((r: any) => r.barcode)
         toast({
-          title: "Duplicate barcode",
-          description: `Barcode ${conflict} already exists. Please scan a different code.`,
+          title: "Duplicate barcodes in database",
+          description: `Already used: ${found.join(", ")}`,
           variant: "destructive",
         })
-      } else {
-        toast({ title: "Database Error", description: `Failed to save variants: ${msg}`, variant: "destructive" })
+        return
       }
-      return
+
+      // Create purchase
+      const { data: purchaseData, error: purchaseError } = await supabase
+        .from("purchases")
+        .insert([{
+          product_name: productName,
+          model_number: modelNumber,
+          category,
+          brand,
+          supplier: selectedSupplier || null,
+          cost_price: parseFloat(costPrice),
+          sale_price: parseFloat(sellPrice),
+          description: description || null
+        }])
+        .select("id")
+        .single()
+
+      if (purchaseError) {
+        console.error("Purchase insert failed:", purchaseError)
+        toast({ title: "Database Error", description: `Failed to save product: ${purchaseError.message}`, variant: "destructive" })
+        return
+      }
+
+      const purchaseId = purchaseData?.id
+      if (!purchaseId) {
+        toast({ title: "Database Error", description: "Failed to save product: No purchase ID returned", variant: "destructive" })
+        return
+      }
+
+      // Insert variants - one for each barcode (each representing one physical unit)
+      const variantInserts = validVariants.flatMap((v) => 
+        v.barcodes.map(barcode => ({
+          barcode: barcode.trim(),
+          purchase_id: purchaseId,
+          color: v.color,
+          quantity: 1,  // Each barcode represents one unit
+          imei: barcode.trim()  // IMEI same as barcode as requested
+        }))
+      )
+
+      const { error: variantError } = await supabase.from("color_variants").insert(variantInserts)
+
+      if (variantError) {
+        console.error("Variant insert error:", variantError)
+        toast({ title: "Database Error", description: `Failed to save variants: ${variantError.message}`, variant: "destructive" })
+        return
+      }
+
+      toast({ 
+        title: "Success", 
+        description: `Product saved with ${variantInserts.length} individual units!` 
+      })
+      resetForm()
+    } catch (err: any) {
+      console.error("Unexpected error:", err)
+      toast({ title: "Error", description: "An unexpected error occurred while saving the product", variant: "destructive" })
     }
-
-    toast({ title: "Success", description: `Product saved with ${validVariants.length} color variants!` })
-    resetForm()
-  } catch (err: any) {
-    console.error("Unexpected error:", err)
-    toast({ title: "Error", description: "An unexpected error occurred while saving the product", variant: "destructive" })
   }
-}
 
+  const resetForm = () => {
+    setProductName("")
+    setModelNumber("")
+    setCategory("")
+    setBrand("")
+    setCostPrice("")
+    setSellPrice("")
+    setDescription("")
+    setSelectedSupplier("")
+    setColorVariants([{ id: "1", color: "", quantity: 0, barcodes: [] }])
+  }
 
-// Add this helper function to reset the form
-const resetForm = () => {
-  setProductName("")
-  setModelNumber("")
-  setCategory("")
-  setBrand("")
-  setCostPrice("")
-  setSellPrice("")
-  setDescription("")
-  setSelectedSupplier("")
-  setColorVariants([{ id: "1", color: "", quantity: 0, imei: "", barcode: "" }])
-}
   return (
     <>
       <form className="space-y-6">
@@ -371,7 +415,7 @@ const resetForm = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label>Color*</Label>
                       <Input
@@ -387,55 +431,65 @@ const resetForm = () => {
                         type="number"
                         placeholder="0"
                         value={variant.quantity || ""}
-                        onChange={(e) =>
-                          updateColorVariant(variant.id, "quantity", Number.parseInt(e.target.value) || 0)
-                        }
+                        onChange={(e) => {
+                          const newQuantity = Number.parseInt(e.target.value) || 0
+                          updateColorVariant(variant.id, "quantity", newQuantity)
+                          generateBarcodesForVariant(variant.id, newQuantity)
+                        }}
                         required
-                      />
-                    </div>
-                    <div>
-                      <Label>IMEI/Voucher Code</Label>
-                      <Input
-                        placeholder="Enter IMEI or code"
-                        value={variant.imei || ""}
-                        onChange={(e) => updateColorVariant(variant.id, "imei", e.target.value)}
                       />
                     </div>
                   </div>
 
-                  {/* Barcode Section */}
-                  <div className="space-y-3">
-                    <Label>Product Barcode*</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Scan barcode from product box"
-                        value={variant.barcode}
-                        onChange={(e) => updateColorVariant(variant.id, "barcode", e.target.value)}
-                        className="flex-1"
-                        required
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => openBarcodeScanner(variant.id)}
-                      >
-                        <Camera className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    {variant.barcode && (
+                  {/* Barcode Section - One for each unit */}
+                  {variant.quantity > 0 && (
+                    <div className="space-y-3">
+                      <Label>Product Barcodes* ({variant.quantity} units)</Label>
+                      <div className="space-y-2">
+                        {Array.from({ length: variant.quantity }).map((_, i) => (
+                          <div key={i} className="flex gap-2 items-center">
+                            <Label className="w-20">Unit {i + 1}:</Label>
+                            <Input
+                              placeholder="Scan barcode"
+                              value={variant.barcodes[i] || ""}
+                              onChange={(e) => updateIndividualBarcode(variant.id, i, e.target.value)}
+                              className="flex-1"
+                              required
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() => openBarcodeScanner(variant.id, i)}
+                            >
+                              <Camera className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                       <div className="bg-muted p-3 rounded-lg">
                         <div className="flex items-center gap-2">
                           <QrCode className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">Barcode: </span>
-                          <code className="bg-background px-2 py-1 rounded text-sm font-mono">{variant.barcode}</code>
+                          <span className="text-sm font-medium">Barcodes: </span>
+                        </div>
+                        <div className="mt-2 space-y-1">
+                          {variant.barcodes.map((barcode, i) => (
+                            barcode && (
+                              <div key={i} className="flex items-center gap-2">
+                                <Barcode className="h-3 w-3" />
+                                <code className="bg-background px-2 py-1 rounded text-xs font-mono">
+                                  {barcode}
+                                </code>
+                              </div>
+                            )
+                          ))}
                         </div>
                         <p className="text-xs text-muted-foreground mt-2">
-                          This barcode will auto-fill product information when scanned in POS
+                          Each barcode represents one physical unit. Barcode and IMEI will be the same.
                         </p>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -453,7 +507,7 @@ const resetForm = () => {
 
         {/* Form Actions */}
         <div className="flex justify-end space-x-2 pt-4">
-          <Button type="button" variant="outline">
+          <Button type="button" variant="outline" onClick={resetForm}>
             <X className="mr-2 h-4 w-4" />
             Cancel
           </Button>
