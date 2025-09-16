@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { Save, X, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,32 +13,41 @@ import { useToast } from "@/hooks/use-toast"
 const supabase = createClient()
 
 type PurchaseItem = {
+  id: number
   barcode: string
   color: string | null
   quantity: number
   cost_price: number | null
   imei: string | null
+  purchase_id: number
 }
 
-type PurchaseHit = {
-  purchase_id: number
-  invoice_number?: string | null
-  purchase_date: string
+type Purchase = {
+  id: number
+  invoice_number: string | null
+  created_at: string
   supplier: string | null
   product_name: string | null
   model_number: string | null
   category: string | null
   brand: string | null
-  total_cost: number | null
-  items: PurchaseItem[] | null
+  cost_price: number | null
+  sale_price: number | null
+  description: string | null
+}
+
+type Supplier = {
+  id: string
+  name: string
 }
 
 export function PurchaseReturnForm() {
   const { toast } = useToast()
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
 
-  // Supplier / invoice info
+  // Supplier / barcode info
   const [supplier, setSupplier] = useState<string>("")
-  const [purchaseInvoice, setPurchaseInvoice] = useState<string>("")
+  const [barcode, setBarcode] = useState<string>("")
 
   // Product Information
   const [productName, setProductName] = useState<string>("")
@@ -49,7 +58,7 @@ export function PurchaseReturnForm() {
 
   // Return Details
   const [returnReason, setReturnReason] = useState<string>("")
-  const [returnDate, setReturnDate] = useState<string>("")
+  const [returnDate, setReturnDate] = useState<string>(new Date().toISOString().split('T')[0])
   const [notes, setNotes] = useState<string>("")
 
   // Credit Information
@@ -57,7 +66,32 @@ export function PurchaseReturnForm() {
   const [creditAmount, setCreditAmount] = useState<number | null>(null)
 
   const [submitting, setSubmitting] = useState(false)
-  const [loadingInvoice, setLoadingInvoice] = useState(false)
+  const [loadingBarcode, setLoadingBarcode] = useState(false)
+  const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([])
+
+  // Load suppliers from database
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("suppliers")
+          .select("id, name")
+          .order("name", { ascending: true })
+
+        if (error) throw error
+        setSuppliers((data as Supplier[]) || [])
+      } catch (err: any) {
+        console.error("Failed to load suppliers:", err)
+        toast({
+          title: "Error",
+          description: "Could not load suppliers from database.",
+          variant: "destructive",
+        })
+      }
+    }
+
+    loadSuppliers()
+  }, [toast])
 
   const totalAmount = useMemo<number | null>(() => {
     if (quantity == null || unitCost == null) return null
@@ -81,180 +115,172 @@ export function PurchaseReturnForm() {
     }
   }
 
-  const loadFromInvoice = async () => {
-    const term = purchaseInvoice.trim() || productName.trim()
-    if (!term) {
-      toast({ title: "Enter a search", description: "Provide a purchase invoice or product name.", variant: "destructive" })
+  const loadFromBarcode = async () => {
+    const barcodeValue = barcode.trim()
+    if (!barcodeValue) {
+      toast({ title: "Enter a barcode", description: "Please provide a barcode to search.", variant: "destructive" })
       return
     }
 
-    setLoadingInvoice(true)
+    setLoadingBarcode(true)
     try {
-      const { data, error } = await supabase.rpc("get_purchases_for_return", { search_term: term })
-      if (error) throw error
+      // First, find purchase items with this barcode
+      const { data: items, error: itemsError } = await supabase
+        .from("inventory")
+        .select("*")
+        .eq("barcode", barcodeValue)
 
-      const purchases: PurchaseHit[] = Array.isArray(data) ? data : []
-      if (purchases.length === 0) {
-        toast({ title: "Not found", description: "No matching purchase.", variant: "destructive" })
+      if (itemsError) throw itemsError
+
+      if (!items || items.length === 0) {
+        toast({ title: "Not found", description: "No purchase found with this barcode.", variant: "destructive" })
         return
       }
 
-      // prioritize exact invoice match, then latest
-      let chosen =
-        purchases.find((p) => (p.invoice_number || "").toUpperCase() === purchaseInvoice.trim().toUpperCase()) ||
-        purchases.slice().sort((a, b) => +new Date(b.purchase_date) - +new Date(a.purchase_date))[0]
+      setPurchaseItems(items)
 
-      const items = chosen.items || []
-      if (items.length === 0) {
-        toast({ title: "No items", description: "Matched purchase has no items.", variant: "destructive" })
+      // Get the purchase IDs from these items
+      const purchaseIds = items.map(item => item.purchase_id)
+
+      // Find the purchases for these items
+      const { data: purchases, error: purchasesError } = await supabase
+        .from("purchases")
+        .select("*")
+        .in("id", purchaseIds)
+        .order("created_at", { ascending: false })
+
+      if (purchasesError) throw purchasesError
+
+      if (!purchases || purchases.length === 0) {
+        toast({ title: "Not found", description: "No purchase found with this barcode.", variant: "destructive" })
         return
       }
 
-      // Choose item by productName if typed
-      const pn = productName.trim().toLowerCase()
-      const target = pn ? (items.find((i) => (chosen.product_name || "").toLowerCase().includes(pn)) || items[0]) : items[0]
+      // Use the most recent purchase
+      const chosenPurchase = purchases[0]
+      const targetItem = items[0]
 
-      // Autofill (do NOT set quantity)
-      setSupplier(chosen.supplier || supplier)
-      setProductName(chosen.product_name || productName)
-      setModelNumber(chosen.model_number || modelNumber)
-      setColor(target.color || color)
-      setUnitCost(Number(chosen.total_cost ?? target.cost_price ?? unitCost ?? 0) || 0)
+      // Autofill the form
+      setSupplier(chosenPurchase.supplier || "")
+      setProductName(chosenPurchase.product_name || "")
+      setModelNumber(chosenPurchase.model_number || "")
+      setColor(targetItem.color || "")
+      setUnitCost(targetItem.cost_price || chosenPurchase.cost_price || 0)
 
-      toast({ title: "Loaded", description: `Purchase ${chosen.invoice_number || `#${chosen.purchase_id}`} loaded.` })
+      toast({ title: "Loaded", description: `Purchase ${chosenPurchase.invoice_number || `#${chosenPurchase.id}`} loaded.` })
     } catch (e: any) {
       toast({ title: "Error", description: e?.message || "Failed to load purchase.", variant: "destructive" })
     } finally {
-      setLoadingInvoice(false)
+      setLoadingBarcode(false)
     }
   }
 
-  
-
- function isFiniteNum(v: unknown): v is number {
-  return typeof v === "number" && Number.isFinite(v)
-}
-
-async function handleSubmit(e: React.FormEvent) {
-  e.preventDefault()
-  if (submitting) return
-
-  // 1) Validate required fields + types
-  const _supplier = (supplier || "").trim()
-  const _productName = (productName || "").trim()
-  const _returnReason = (returnReason || "").trim()
-  const _creditMethod = (creditMethod || "").trim()
-  const _qty = quantity
-  const _unit = unitCost
-
-  const missing: string[] = []
-  if (!_supplier) missing.push("Supplier")
-  if (!_productName) missing.push("Product Name")
-  if (!isFiniteNum(_qty) || _qty <= 0) missing.push("Quantity")
-  if (!isFiniteNum(_unit) || _unit < 0) missing.push("Unit Cost")
-  if (!_returnReason) missing.push("Return Reason")
-  if (!_creditMethod) missing.push("Credit Method")
-
-  if (missing.length > 0) {
-    toast({
-      title: "Missing fields",
-      description: `Please fill: ${missing.join(", ")}`,
-      variant: "destructive",
-    })
-    return
+  function isFiniteNum(v: unknown): v is number {
+    return typeof v === "number" && Number.isFinite(v)
   }
 
-  setSubmitting(true)
-  try {
-    // 2) Find the original purchase (invoice preferred)
-    const term = (purchaseInvoice || "").trim() || `${_productName} ${modelNumber || ""}`.trim()
-    const { data: purchasesResp, error: purchasesErr } = await supabase.rpc("get_purchases_for_return", {
-      search_term: term,
-    })
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (submitting) return
 
-    if (purchasesErr) {
-      console.error("[get_purchases_for_return] error:", purchasesErr)
-      toast({ title: "Error", description: purchasesErr.message ?? "Failed to load purchase.", variant: "destructive" })
-      return
-    }
+    // 1) Validate required fields + types
+    const _supplier = (supplier || "").trim()
+    const _productName = (productName || "").trim()
+    const _returnReason = (returnReason || "").trim()
+    const _creditMethod = (creditMethod || "").trim()
+    const _qty = quantity
+    const _unit = unitCost
+    const _barcode = (barcode || "").trim()
 
-    const purchases = Array.isArray(purchasesResp) ? purchasesResp : []
-    if (purchases.length === 0) {
-      toast({ title: "No matching purchase", description: "Could not find a purchase for this product.", variant: "destructive" })
-      return
-    }
+    const missing: string[] = []
+    if (!_supplier) missing.push("Supplier")
+    if (!_productName) missing.push("Product Name")
+    if (!_barcode) missing.push("Barcode")
+    if (!isFiniteNum(_qty) || _qty <= 0) missing.push("Quantity")
+    if (!isFiniteNum(_unit) || _unit < 0) missing.push("Unit Cost")
+    if (!_returnReason) missing.push("Return Reason")
+    if (!_creditMethod) missing.push("Credit Method")
+    if (!returnDate) missing.push("Return Date")
 
-    let chosen =
-      purchases.find((p: any) => (p.invoice_number || "").toUpperCase() === (purchaseInvoice || "").trim().toUpperCase()) ||
-      purchases.slice().sort((a: any, b: any) => +new Date(b.purchase_date) - +new Date(a.purchase_date))[0]
-
-    const items: any[] = chosen.items || []
-    if (items.length === 0) {
-      toast({ title: "No items in purchase", description: "The matched purchase has no items.", variant: "destructive" })
-      return
-    }
-
-    // For now pick the first item (you can refine selection logic as needed)
-    const target = items[0]
-    if (!target?.barcode) {
-      toast({ title: "Error", description: "Matched purchase item has no barcode.", variant: "destructive" })
-      return
-    }
-
-    // 3) Build payload EXACTLY matching the SQL signature (jsonb array, not a string)
-    const payload = {
-      p_original_purchase_id: Number(chosen.purchase_id), // ensure integer
-      p_supplier: _supplier,
-      p_return_reason: _returnReason.replace("-", "_"),
-      p_credit_method: _creditMethod,
-      p_return_items: [
-        { barcode: String(target.barcode), quantity: _qty, condition: "defective" }
-      ],
-      p_notes: (notes || "").trim() || null,
-    }
-
-    // 4) Call RPC and log raw result
-    const { data, error } = await supabase.rpc("process_purchase_return", payload)
-    console.log("[process_purchase_return] payload:", payload)
-    console.log("[process_purchase_return] data:", data)
-    console.log("[process_purchase_return] error:", error)
-
-    if (error) {
-      toast({ title: "Error", description: error.message ?? "Failed to process purchase return.", variant: "destructive" })
-      return
-    }
-
-    // Function returns { success, return_id, total_credit, message } on success
-    if (!data?.success) {
-      toast({ title: "Error", description: data?.message ?? "Server reported failure.", variant: "destructive" })
-      return
-    }
-
-    // Optional: compare entered creditAmount to server total
-    if (isFiniteNum(creditAmount) && isFiniteNum(Number(data.total_credit)) &&
-        Math.abs(creditAmount - Number(data.total_credit)) > 0.009) {
+    if (missing.length > 0) {
       toast({
-        title: "Credit differs",
-        description: `Entered ৳${creditAmount.toFixed(2)} vs server ৳${Number(data.total_credit).toFixed(2)}. Using server value.`,
+        title: "Missing fields",
+        description: `Please fill: ${missing.join(", ")}`,
+        variant: "destructive",
       })
+      return
     }
 
-    toast({ title: "Return processed", description: `Purchase return #${data.return_id} processed.` })
+    setSubmitting(true)
+    try {
+      // 2) Find the original purchase by barcode
+      if (purchaseItems.length === 0) {
+        toast({ title: "No matching purchase", description: "Could not find a purchase for this barcode.", variant: "destructive" })
+        return
+      }
 
-    // 5) Reset form (keep supplier)
-    setProductName(""); setModelNumber(""); setColor("")
-    setQuantity(null); setUnitCost(null)
-    setReturnReason(""); setReturnDate(""); setNotes("")
-    setCreditMethod(""); setCreditAmount(null)
-    setPurchaseInvoice("")
-  } catch (err: any) {
-    console.error("[handleSubmit] unexpected error:", err)
-    toast({ title: "Error", description: err?.message ?? "Unexpected error.", variant: "destructive" })
-  } finally {
-    setSubmitting(false)
+      // Use the first purchase item found
+      const targetItem = purchaseItems[0]
+      
+      // 3) Insert into purchase_returns table
+      const { data: returnData, error: returnError } = await supabase
+        .from("purchase_returns")
+        .insert({
+          original_purchase_id: targetItem.purchase_id,
+          supplier: _supplier,
+          return_reason: _returnReason.replace("-", "_"),
+          credit_method: _creditMethod,
+          notes: (notes || "").trim() || null,
+          return_date: returnDate,
+          total_credit_amount: (_qty || 0) * (_unit || 0),
+        })
+        .select()
+        .single()
+
+      if (returnError) {
+        console.error("[purchase_returns insert] error:", returnError)
+        toast({ title: "Error", description: returnError.message || "Failed to create purchase return.", variant: "destructive" })
+        return
+      }
+
+      // 4) Insert into purchase_return_items table
+      const { error: itemsError } = await supabase
+        .from("purchase_return_items")
+        .insert({
+          purchase_return_id: returnData.id,
+          barcode: _barcode,
+          product_name: _productName,
+          model_number: modelNumber || null,
+          color: color || null,
+          return_quantity: _qty || 0,
+          unit_cost: _unit || 0,
+          total_credit_amount: (_qty || 0) * (_unit || 0),
+          condition: mapReasonToCondition(_returnReason),
+          original_color_variant_barcode: _barcode,
+        })
+
+      if (itemsError) {
+        console.error("[purchase_return_items insert] error:", itemsError)
+        toast({ title: "Error", description: itemsError.message || "Failed to create purchase return items.", variant: "destructive" })
+        return
+      }
+
+      toast({ title: "Return processed", description: `Purchase return #${returnData.id} processed.` })
+
+      // 5) Reset form
+      setBarcode("")
+      setProductName(""); setModelNumber(""); setColor("")
+      setQuantity(null); setUnitCost(null)
+      setReturnReason(""); setReturnDate(new Date().toISOString().split('T')[0]); setNotes("")
+      setCreditMethod(""); setCreditAmount(null)
+      setPurchaseItems([])
+    } catch (err: any) {
+      console.error("[handleSubmit] unexpected error:", err)
+      toast({ title: "Error", description: err?.message || "Unexpected error.", variant: "destructive" })
+    } finally {
+      setSubmitting(false)
+    }
   }
-}
-
 
   return (
     <form className="space-y-6 h-[calc(100vh-8rem)] overflow-y-auto pr-1" onSubmit={handleSubmit}>
@@ -266,26 +292,36 @@ async function handleSubmit(e: React.FormEvent) {
           <div>
             <Label htmlFor="supplier">Supplier*</Label>
             <Select value={supplier} onValueChange={setSupplier}>
-              <SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="Select supplier" />
+              </SelectTrigger>
               <SelectContent>
-                <SelectItem value="TechSupplies Inc.">TechSupplies Inc.</SelectItem>
-                <SelectItem value="AccessoryWorld">AccessoryWorld</SelectItem>
-                <SelectItem value="MobileParts Ltd.">MobileParts Ltd.</SelectItem>
+                {suppliers.length === 0 ? (
+                  <SelectItem value="none" disabled>
+                    No suppliers found
+                  </SelectItem>
+                ) : (
+                  suppliers.map((s) => (
+                    <SelectItem key={s.id} value={s.name}>
+                      {s.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>
           <div className="md:col-span-2">
-            <Label htmlFor="purchase-invoice">Invoice Number</Label>
+            <Label htmlFor="barcode">Barcode*</Label>
             <div className="flex gap-2">
               <Input
-                id="purchase-invoice"
-                placeholder="8-char code"
-                value={purchaseInvoice}
-                onChange={(e) => setPurchaseInvoice(e.target.value)}
+                id="barcode"
+                placeholder="Enter barcode"
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
               />
-              <Button type="button" variant="outline" onClick={loadFromInvoice} disabled={loadingInvoice}>
+              <Button type="button" variant="outline" onClick={loadFromBarcode} disabled={loadingBarcode}>
                 <Search className="mr-2 h-4 w-4" />
-                {loadingInvoice ? "Loading..." : "Load"}
+                {loadingBarcode ? "Loading..." : "Load"}
               </Button>
             </div>
           </div>
@@ -364,7 +400,13 @@ async function handleSubmit(e: React.FormEvent) {
           </div>
           <div>
             <Label htmlFor="return-date">Return Date*</Label>
-            <Input id="return-date" type="date" required value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+            <Input 
+              id="return-date" 
+              type="date" 
+              required 
+              value={returnDate} 
+              onChange={(e) => setReturnDate(e.target.value)} 
+            />
           </div>
         </div>
 

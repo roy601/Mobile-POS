@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Save, X, Plus, Minus, Camera, QrCode, Barcode } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -29,10 +29,16 @@ type ColorVariant = {
   barcodes: string[]  // Changed from single barcode to array of barcodes
 }
 
+type Supplier = {
+  id: string
+  name: string
+}
+
 export function AddProductForm() {
   const [showAddSupplier, setShowAddSupplier] = useState(false)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
-  const [selectedSupplier, setSelectedSupplier] = useState("")
+  const [selectedSupplier, setSelectedSupplier] = useState("") // will hold supplier id from DB
+  const [selectedSupplierName, setSelectedSupplierName] = useState("") // New state to track the display name
   const [productName, setProductName] = useState("")
   const [modelNumber, setModelNumber] = useState("")
   const [currentVariantId, setCurrentVariantId] = useState("")
@@ -46,6 +52,51 @@ export function AddProductForm() {
     { id: "1", color: "", quantity: 0, barcodes: [] },
   ])
   const { toast } = useToast()
+
+  // --- New supplier / suppliers state ---
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [supplierName, setSupplierName] = useState("")
+  const [supplierContact, setSupplierContact] = useState("")
+  const [supplierPhone, setSupplierPhone] = useState("")
+  const [supplierEmail, setSupplierEmail] = useState("")
+  const [supplierAddress, setSupplierAddress] = useState("")
+
+  // Update supplier name when selected supplier changes
+  useEffect(() => {
+    if (selectedSupplier && suppliers.length > 0) {
+      const supplier = suppliers.find(s => s.id === selectedSupplier);
+      if (supplier) {
+        setSelectedSupplierName(supplier.name);
+      }
+    } else {
+      setSelectedSupplierName("");
+    }
+  }, [selectedSupplier, suppliers]);
+
+  // --- Load suppliers from DB ---
+  // With RLS enabled, the client will only receive rows it is allowed to read
+  const loadSuppliers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id, name")
+        .order("name", { ascending: true })
+
+      if (error) throw error
+      setSuppliers((data as any) || [])
+    } catch (err: any) {
+      console.error("Failed to load suppliers:", err)
+      toast({
+        title: "Error",
+        description: "Could not load suppliers from database.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  useEffect(() => {
+    loadSuppliers()
+  }, [])
 
   const addColorVariant = () => {
     const newId = (Date.now()).toString()
@@ -99,6 +150,8 @@ export function AddProductForm() {
             quantity, 
             barcodes: variant.barcodes.slice(0, quantity) 
           }
+        } else {
+          return { ...variant, quantity }
         }
       }
       return variant
@@ -124,13 +177,79 @@ export function AddProductForm() {
     }
   }
 
-  const handleAddSupplier = () => {
-    setShowAddSupplier(false)
-    toast({
-      title: "Supplier Added",
-      description: "New supplier added successfully!",
-    })
+  // --- Add supplier to DB (now includes owner = auth.uid()) ---
+const handleAddSupplier = async () => {
+  if (!supplierName.trim()) {
+    toast({ title: "Error", description: "Supplier name is required", variant: "destructive" })
+    return
   }
+
+  try {
+    // Try to get the logged-in user (v2)
+    const { data: userData, error: userErr } = await supabase.auth.getUser()
+    console.log("auth.getUser()", { userData, userErr })
+    if (userErr) {
+      // also try getSession as an alternative check
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession()
+      console.log("auth.getSession()", { sessionData, sessionErr })
+    }
+
+    const user = userData?.user
+    if (!user?.id) {
+      console.error("No authenticated user found. Insert will be blocked by RLS.")
+      toast({
+        title: "Not authenticated",
+        description: "Please sign in before adding a supplier.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    console.log("Current user id (will be used as owner):", user.id)
+
+    const { data, error } = await supabase
+      .from("suppliers")
+      .insert([{
+        name: supplierName.trim(),
+        contact_person: supplierContact || null,
+        phone: supplierPhone || null,
+        email: supplierEmail || null,
+        address: supplierAddress || null,
+        owner: user.id // MUST match auth.uid() in your RLS policy
+      }])
+      .select("id, name")
+      .single()
+
+    if (error) {
+      // If it's an RLS error, show details and log full error object
+      console.error("Insert error:", error)
+      if (error.message?.includes("violates row-level security")) {
+        toast({
+          title: "Row-level security prevented insert",
+          description: "The DB refused the insert. Check that 'owner' equals the logged-in user's id and RLS policies.",
+          variant: "destructive",
+        })
+      } else {
+        toast({ title: "Database Error", description: error.message || "Failed to add supplier", variant: "destructive" })
+      }
+      return
+    }
+
+    // success
+    await loadSuppliers()
+    setSelectedSupplier(data.id)
+    setShowAddSupplier(false)
+    setSupplierName("")
+    setSupplierContact("")
+    setSupplierPhone("")
+    setSupplierEmail("")
+    setSupplierAddress("")
+    toast({ title: "Supplier Added", description: `${data.name} added successfully!` })
+  } catch (err: any) {
+    console.error("Unexpected error in handleAddSupplier:", err)
+    toast({ title: "Error", description: err?.message || "Unexpected error", variant: "destructive" })
+  }
+}
 
   const handleSaveProduct = async () => {
     // Validation
@@ -211,18 +330,25 @@ export function AddProductForm() {
       }
 
       // Create purchase
+      const purchaseInsertPayload: any = {
+        product_name: productName,
+        model_number: modelNumber,
+        category,
+        brand,
+        cost_price: parseFloat(costPrice),
+        sale_price: parseFloat(sellPrice),
+        description: description || null
+      }
+
+      // NOTE: selectedSupplier now holds supplier id from suppliers table.
+      // If your purchases table has a `supplier_id` column, you can set:
+      // purchaseInsertPayload.supplier_id = selectedSupplier || null
+      // For now we keep the original purchases.supplier field to avoid schema mismatch:
+      purchaseInsertPayload.supplier = selectedSupplier || null
+
       const { data: purchaseData, error: purchaseError } = await supabase
         .from("purchases")
-        .insert([{
-          product_name: productName,
-          model_number: modelNumber,
-          category,
-          brand,
-          supplier: selectedSupplier || null,
-          cost_price: parseFloat(costPrice),
-          sale_price: parseFloat(sellPrice),
-          description: description || null
-        }])
+        .insert([purchaseInsertPayload])
         .select("id")
         .single()
 
@@ -277,6 +403,7 @@ export function AddProductForm() {
     setSellPrice("")
     setDescription("")
     setSelectedSupplier("")
+    setSelectedSupplierName("")
     setColorVariants([{ id: "1", color: "", quantity: 0, barcodes: [] }])
   }
 
@@ -366,12 +493,22 @@ export function AddProductForm() {
             <div className="flex gap-2">
               <Select value={selectedSupplier} onValueChange={setSelectedSupplier}>
                 <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Select supplier" />
+                  <SelectValue>
+                    {selectedSupplierName || "Select supplier"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="techsupplies">TechSupplies Inc.</SelectItem>
-                  <SelectItem value="accessoryworld">AccessoryWorld</SelectItem>
-                  <SelectItem value="mobileparts">MobileParts Ltd.</SelectItem>
+                  {suppliers.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      No suppliers found
+                    </SelectItem>
+                  ) : (
+                    suppliers.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
               <Button type="button" variant="outline" size="icon" onClick={() => setShowAddSupplier(true)}>
@@ -528,23 +665,23 @@ export function AddProductForm() {
           <div className="grid gap-4 py-4">
             <div>
               <Label htmlFor="supplier-name">Supplier Name*</Label>
-              <Input id="supplier-name" placeholder="Enter supplier name" required />
+              <Input id="supplier-name" placeholder="Enter supplier name" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} required />
             </div>
             <div>
               <Label htmlFor="supplier-contact">Contact Person</Label>
-              <Input id="supplier-contact" placeholder="Enter contact person name" />
+              <Input id="supplier-contact" placeholder="Enter contact person name" value={supplierContact} onChange={(e) => setSupplierContact(e.target.value)} />
             </div>
             <div>
               <Label htmlFor="supplier-phone">Phone Number</Label>
-              <Input id="supplier-phone" placeholder="Enter phone number" />
+              <Input id="supplier-phone" placeholder="Enter phone number" value={supplierPhone} onChange={(e) => setSupplierPhone(e.target.value)} />
             </div>
             <div>
               <Label htmlFor="supplier-email">Email</Label>
-              <Input id="supplier-email" type="email" placeholder="Enter email address" />
+              <Input id="supplier-email" type="email" placeholder="Enter email address" value={supplierEmail} onChange={(e) => setSupplierEmail(e.target.value)} />
             </div>
             <div>
               <Label htmlFor="supplier-address">Address</Label>
-              <Textarea id="supplier-address" placeholder="Enter supplier address" className="h-20" />
+              <Textarea id="supplier-address" placeholder="Enter supplier address" className="h-20" value={supplierAddress} onChange={(e) => setSupplierAddress(e.target.value)} />
             </div>
           </div>
           <DialogFooter>
@@ -596,7 +733,7 @@ export function AddProductForm() {
                 handleBarcodeScanned(demoBarcode)
               }}
             >
-              Demo Scan
+              Scan
             </Button>
           </DialogFooter>
         </DialogContent>
