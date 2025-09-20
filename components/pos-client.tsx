@@ -276,84 +276,238 @@ export function POSClient() {
 
   // ---- Printable receipt
 
-  const openPrintableReceipt = async (saleId: number) => {
+
+const openPrintableReceipt = async (
+  saleId: number,
+  options?: { autoPrint?: boolean; closeAfterPrint?: boolean }
+) => {
+  const autoPrint = !!options?.autoPrint;
+  const closeAfterPrint = !!options?.closeAfterPrint;
+
+  const esc = (v: any) =>
+    v === null || v === undefined
+      ? ""
+      : String(v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+
+  const money = (n: any) => {
+    const num = Number(n || 0);
+    return "৳" + num.toFixed(2);
+  };
+
+  try {
     const [{ data: sale }, { data: cust }, { data: items }] = await Promise.all([
       supabase.from("sales").select("*").eq("id", saleId).single(),
       supabase.from("sale_customers").select("*").eq("sales_id", saleId).single(),
       supabase.from("sold_products").select("*").eq("sales_id", saleId),
-    ])
+    ]);
 
-    const inv = sale?.invoice_number || `INV-${String(saleId).padStart(6, "0")}`
-    const dateStr = new Date(sale?.sale_date || sale?.created_at || Date.now()).toLocaleString()
+    // Pick barcode (or IMEI/EAN) from first sold item
+    const firstItem = items?.[0] || {};
+    const barcodeOrIMEI = firstItem.barcode || firstItem.imei || firstItem.ean || "";
 
+    // Use barcode instead of invoice number
+    const inv = barcodeOrIMEI || sale?.invoice_number || `CVSL-${String(saleId).padStart(6, "0")}`;
+
+    const dateStr = new Date(sale?.sale_date || sale?.created_at || Date.now()).toLocaleDateString();
+
+    // build rows with IMEI / EAN on second line for item column (if present)
     const rows =
       (items || [])
-        .map(
-          (it: any) => `
-        <tr>
-          <td>${it.product_name || ""}</td>
-          <td>${it.color || ""}</td>
-          <td style="text-align:right">${it.quantity}</td>
-          <td style="text-align:right">৳${Number(it.unit_price).toFixed(2)}</td>
-          <td style="text-align:right">৳${Number(it.total_price).toFixed(2)}</td>
-        </tr>`
-        )
-        .join("") || ""
+        .map((it: any, idx: number) => {
+          const product = esc(it.product_name || "");
+          const imeiOrCode = esc(it.imei || it.barcode || it.ean || "");
+          const color = esc(it.color || "");
+          const qty = Number(it.quantity || 0);
+          const unit = money(it.unit_price);
+          const total = money(it.total_price);
+          const itemCell = `<div style="line-height:1.05;">
+              <div style="font-weight:600;">${product}</div>
+              ${imeiOrCode ? `<div style="font-size:11px;color:#333;margin-top:4px;">${imeiOrCode}</div>` : ""}
+            </div>`;
+          return `
+            <tr>
+              <td style="width:6%;padding:8px;border-bottom:1px solid #999;">${idx + 1}</td>
+              <td style="width:56%;padding:8px;border-bottom:1px solid #999;">${itemCell}${color ? `<div style="font-size:11px;color:#333;margin-top:4px;">${color}</div>` : ""}</td>
+              <td style="width:8%;padding:8px;border-bottom:1px solid #999;text-align:center">${qty}</td>
+              <td style="width:10%;padding:8px;border-bottom:1px solid #999;text-align:right">${unit}</td>
+              <td style="width:20%;padding:8px;border-bottom:1px solid #999;text-align:right">${total}</td>
+            </tr>`;
+        })
+        .join("") ||
+      `<tr><td colspan="5" style="padding:18px;text-align:center;color:#666;">No items found</td></tr>`;
 
-    const html = `
-<!doctype html><html><head><meta charset="utf-8" />
-<title>${inv}</title>
+    // Company details
+    const companyName = esc("Star Power");
+    const companyAddressLines = [
+      "Shop # 507/B (5th Floor), Sector-7, Road # 03, North Tower, Uttara, Dhaka-1230",
+      "Mobile: 01727678944, 01678077128",
+    ];
+
+    // totals
+    const subtotal = sale?.subtotal ?? sale?.sub_total ?? 0;
+    const discount = sale?.total_discount ?? sale?.discount ?? 0;
+    const previousDues = sale?.previous_dues ?? 0;
+    const grandTotal = sale?.total_amount ?? sale?.grand_total ?? subtotal - discount + previousDues;
+    const received = sale?.total_received ?? sale?.received ?? 0;
+    const dues = sale?.due_amount ?? sale?.remaining_due ?? Math.max(0, grandTotal - received);
+    const change = sale?.change_amount ?? sale?.change ?? 0;
+
+    // Footer
+    const footerBanglaLine = esc("যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।");
+    const footerContactNote = esc("If you find any issue in this invoice, contact: Cell: 01678-077128");
+
+    const watermarkText = esc("TECNO");
+
+    const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${esc(inv)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-  body { font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:16px; }
-  h2 { margin: 0 0 8px; }
-  .muted { color:#666; }
-  table { width:100%; border-collapse:collapse; margin-top:12px; }
-  th, td { border-bottom:1px solid #ddd; padding:8px; font-size:12px; }
-  th { text-align:left; background:#f7f7f7; }
-  .totals { margin-top:12px; float:right; width:320px; }
-  .totals div { display:flex; justify-content:space-between; padding:6px 0; }
-  @media print { button { display:none; } }
-</style>
-</head><body>
-  <div>
-    <h2>Receipt</h2>
-    <div class="muted">${dateStr}</div>
-    <div><strong>Invoice:</strong> ${inv}</div>
-    <div><strong>Customer:</strong> ${cust?.customer_name || ""} ${cust?.customer_phone ? `(${cust.customer_phone})` : ""}</div>
-  </div>
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; margin: 12px; color:#111; background:#fff; }
+  .page { width: 100%; max-width: 800px; margin: 0 auto; padding: 10px; box-sizing: border-box; }
 
-  <table>
-    <thead>
-      <tr>
-        <th>Product</th><th>Color</th><th style="text-align:right">Qty</th>
-        <th style="text-align:right">Unit</th><th style="text-align:right">Total</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
+  .header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px; }
+  .company { font-weight:700; font-size:18px; }
+  .company small { display:block; font-weight:400; font-size:12px; margin-top:6px; color:#222; }
+  .invoice-box { border:1px solid #000; padding:8px 10px; text-align:left; width:230px; }
+  .invoice-box .title { font-weight:700; font-size:12px; margin-bottom:6px; }
+  .invoice-box .row { display:flex; justify-content:space-between; font-size:12px; margin:4px 0; }
 
-  <div class="totals">
-    <div><span>Subtotal</span><span>৳${Number(sale?.subtotal || 0).toFixed(2)}</span></div>
-    <div><span>Discount</span><span>-৳${Number(sale?.total_discount || 0).toFixed(2)}</span></div>
-    ${sale?.previous_dues > 0 ? `<div><span>Previous Dues</span><span>৳${Number(sale?.previous_dues || 0).toFixed(2)}</span></div>` : ''}
-    <div style="font-weight:bold;"><span>Grand Total</span><span>৳${Number(sale?.total_amount || 0).toFixed(2)}</span></div>
-    <div><span>Received</span><span>৳${Number(sale?.total_received || 0).toFixed(2)}</span></div>
-    ${sale?.due_amount > 0 ? `<div style="color:red;"><span>Remaining Due</span><span>৳${Number(sale?.due_amount || 0).toFixed(2)}</span></div>` : ''}
-    ${sale?.change_amount > 0 ? `<div><span>Change</span><span>৳${Number(sale?.change_amount || 0).toFixed(2)}</span></div>` : ''}
-  </div>
+  .customer-block { display:flex; gap:12px; margin-bottom:8px; }
+  .cust-left { flex:1; border:1px solid #000; padding:8px; box-sizing:border-box; }
+  .cust-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .cust-label { min-width:90px; font-weight:700; font-size:13px; }
+  .cust-value { flex:1; font-size:13px; }
 
-  <div style="clear:both; margin-top:24px;">
-    <button onclick="window.print()">Print</button>
-  </div>
-</body></html>
-`
-    const w = window.open("", "_blank", "width=720,height=960")
-    if (!w) return
-    w.document.open()
-    w.document.write(html)
-    w.document.close()
-    // w.onload = () => w.print() // uncomment to auto-print
+  table.items { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  table.items th, table.items td { border-bottom:1px solid #999; padding:8px; vertical-align:top; }
+  table.items th { background:#f5f5f5; font-weight:700; font-size:13px; text-align:left; }
+  table.items td { font-size:13px; color:#111; }
+
+  .totals-box { border:1px solid #000; width:260px; padding:8px; box-sizing:border-box; float:right; margin-top:12px; }
+  .totals-box .line { display:flex; justify-content:space-between; padding:6px 0; font-size:13px; }
+  .totals-box .bold { font-weight:700; font-size:14px; }
+
+  .watermark { position: fixed; left: 50%; top: 45%; transform: translate(-50%,-50%) rotate(-20deg); opacity:0.08; font-size:120px; font-weight:900; color:#000; pointer-events:none; z-index:0; letter-spacing:8px; }
+
+  .signature { margin-top:110px; display:flex; justify-content:flex-end; align-items:center; gap:8px; }
+  .sig-box { width:180px; text-align:center; border-top:1px solid #000; padding-top:6px; font-size:12px; }
+
+  footer { margin-top:22px; font-size:11px; color:#333; text-align:center; }
+
+  @media print {
+    body { margin:0; }
+    .page { padding:6px; }
+    .watermark { opacity:0.06; }
+    button { display:none; }
   }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="watermark">${watermarkText}</div>
+
+    <div class="header" role="banner">
+      <div>
+        <div class="company">${companyName}</div>
+        <small class="company-address">
+          ${companyAddressLines.map((l) => `<div>${esc(l)}</div>`).join("")}
+        </small>
+      </div>
+
+      <div class="invoice-box" role="region" aria-label="Invoice info">
+        <div style="text-align:right;font-size:14px;font-weight:800">INVOICE</div>
+        <div class="row"><div>IEMI no:</div><div>${esc(inv)}</div></div>
+        <div class="row"><div>Invoice Date:</div><div>${esc(dateStr)}</div></div>
+      </div>
+    </div>
+
+    <div class="customer-block" role="group" aria-label="Customer info">
+      <div class="cust-left">
+        <div style="display:flex;align-items:center; justify-content:space-between;">
+          <div style="font-weight:700;">Name</div>
+          <div style="font-weight:600;">${esc(cust?.customer_name || cust?.name || "")}</div>
+        </div>
+        <div style="border-top:1px solid #ddd; margin-top:8px; padding-top:8px;">
+          <div style="font-weight:700; margin-bottom:4px;">Address / Contract Number</div>
+          <div style="font-size:13px;">${esc(cust?.customer_address || cust?.address || cust?.contract_number || "")} ${cust?.customer_phone ? " - " + esc(cust.customer_phone) : ""}</div>
+        </div>
+      </div>
+    </div>
+
+    <table class="items" role="table" aria-label="Items">
+      <thead>
+        <tr>
+          <th style="width:6%;">SL #</th>
+          <th style="width:62%;">Item/Model/Color</th>
+          <th style="width:8%; text-align:center">Qty</th>
+          <th style="width:12%; text-align:right">Unit</th>
+          <th style="width:12%; text-align:right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+
+    <div class="totals-box" role="complementary" aria-label="Totals">
+      <div class="line"><div>Total</div><div>${money(subtotal)}</div></div>
+      <div class="line"><div>Net Receivables</div><div>${money(grandTotal)}</div></div>
+      <div class="line"><div>Received</div><div>${money(received)}</div></div>
+      <div class="line"><div>Dues</div><div>${money(dues)}</div></div>
+    </div>
+
+    <div style="clear:both"></div>
+
+    <div class="signature">
+      <div style="width:260px;"></div>
+      <div class="sig-box">Authorized Signature</div>
+    </div>
+
+    <footer>
+      <div>${footerBanglaLine}</div>
+      <div style="margin-top:6px;">${footerContactNote}</div>
+    </footer>
+  </div>
+
+  <script>
+    (function(){
+      try {
+        const auto = ${autoPrint ? "true" : "false"};
+        const closeAfter = ${closeAfterPrint ? "true" : "false"};
+        if (auto) {
+          setTimeout(() => {
+            window.print();
+            if (closeAfter) setTimeout(() => window.close(), 600);
+          }, 400);
+        }
+      } catch(e){
+        console.error(e);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+    
+    // Open in new tab
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.write(html);
+      w.document.close();
+    }
+  } catch (err) {
+    console.error("print receipt error:", err);
+    alert("Failed to open printable receipt.");
+  }
+};
+
 
   // ---- Barcode behavior
 
