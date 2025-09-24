@@ -8,68 +8,80 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/utils/supabase/component"
 
 const supabase = createClient()
 
-type CashbookEntry = {
+type ExpenseEntry = {
   id?: number
   date: string
-  particular: string
-  dr_amount: number
-  cr_amount: number
+  category: string
+  description: string
+  amount: number
   created_at?: string
 }
 
-const defaultParticulars = [
-  "BFC",
-  "Total Sales Amount", 
-  "Bank Cash",
-  "Sales Dues",
-  "Total Purchase",
-  "Custom" // This will allow typing custom particular
+const expenseCategories = [
+  "Office Supplies",
+  "Utilities",
+  "Rent",
+  "Transportation",
+  "Marketing",
+  "Equipment",
+  "Maintenance",
+  "Staff Expenses",
+  "Professional Services",
+  "Insurance",
+  "Custom"
 ]
 
-export function DayCashbook() {
-  const [entries, setEntries] = useState<CashbookEntry[]>([])
+export function ExpensesClient() {
+  const [expenses, setExpenses] = useState<ExpenseEntry[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   
   // Search filters
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   
-  // Add entry form
+  // Add expense form
   const [showAddForm, setShowAddForm] = useState(false)
-  const [newEntry, setNewEntry] = useState({
+  const [newExpense, setNewExpense] = useState({
     date: new Date().toISOString().split('T')[0],
-    particular: "",
-    customParticular: "",
-    dr_amount: 0,
-    cr_amount: 0
+    category: "",
+    customCategory: "",
+    description: "",
+    amount: 0
   })
 
   useEffect(() => {
-    // Load today's entries by default
+    // Load today's expenses by default
     const today = new Date().toISOString().split('T')[0]
     setStartDate(today)
     setEndDate(today)
-    searchEntries(today, today)
+    searchExpenses(today, today)
   }, [])
 
-  const searchEntries = async (start?: string, end?: string) => {
+  const searchExpenses = async (start?: string, end?: string) => {
     const searchStart = start || startDate
     const searchEnd = end || endDate
     
-    if (!searchStart) return
+    if (!searchStart) {
+      setError("Please select a start date")
+      return
+    }
 
     setLoading(true)
+    setError(null)
+    
     try {
+      // Simple direct query like other working pages
       let query = supabase
-        .from("day_cashbook_entries")
+        .from("expenses")
         .select("*")
         .gte("date", searchStart)
-        .order("date", { ascending: true })
-        .order("created_at", { ascending: true })
+        .order("date", { ascending: false })
 
       if (searchEnd && searchEnd !== searchStart) {
         query = query.lte("date", searchEnd)
@@ -77,77 +89,101 @@ export function DayCashbook() {
         query = query.lte("date", searchStart)
       }
 
-      const { data, error } = await query
+      const { data, error: queryError } = await query
 
-      if (error) throw error
-      setEntries(data || [])
-    } catch (error) {
-      console.error("Error loading entries:", error)
-      alert("Error loading entries")
+      if (queryError) {
+        console.error("Database query error:", queryError)
+        throw new Error("Failed to load expenses")
+      }
+
+      setExpenses(data || [])
+    } catch (err: any) {
+      const errorMessage = err?.message || "Error loading expenses"
+      console.error("Error loading expenses:", err)
+      setError(errorMessage)
+      setExpenses([])
     } finally {
       setLoading(false)
     }
   }
 
-  const addEntry = async () => {
+  const addExpense = async () => {
     try {
-      const particular = newEntry.particular === "Custom" ? newEntry.customParticular : newEntry.particular
+      const category = newExpense.category === "Custom" ? newExpense.customCategory : newExpense.category
       
-      if (!particular.trim()) {
-        alert("Please enter a particular")
+      if (!category.trim()) {
+        alert("Please select or enter a category")
         return
       }
 
-      const entryToAdd = {
-        date: newEntry.date,
-        particular: particular.trim(),
-        dr_amount: newEntry.dr_amount,
-        cr_amount: newEntry.cr_amount
+      if (!newExpense.description.trim()) {
+        alert("Please enter a description")
+        return
       }
 
+      if (newExpense.amount <= 0) {
+        alert("Please enter a valid amount")
+        return
+      }
+
+      const expenseToAdd = {
+        date: newExpense.date,
+        category: category.trim(),
+        description: newExpense.description.trim(),
+        amount: newExpense.amount
+      }
+
+      // Simple insert like other working pages
       const { data, error } = await supabase
-        .from("day_cashbook_entries")
-        .insert(entryToAdd)
+        .from("expenses")
+        .insert(expenseToAdd)
         .select()
         .single()
 
-      if (error) throw error
+      if (error) {
+        console.error("Insert error:", error)
+        throw new Error("Failed to add expense")
+      }
 
       // Add to local state
-      setEntries([...entries, data])
+      setExpenses([data, ...expenses])
       
       // Reset form
-      setNewEntry({
-        date: newEntry.date, // Keep the same date
-        particular: "",
-        customParticular: "",
-        dr_amount: 0,
-        cr_amount: 0
+      setNewExpense({
+        date: newExpense.date, // Keep the same date
+        category: "",
+        customCategory: "",
+        description: "",
+        amount: 0
       })
       
-      alert("Entry added successfully!")
-    } catch (error) {
-      console.error("Error adding entry:", error)
-      alert("Error adding entry")
+      alert("Expense added successfully!")
+    } catch (err: any) {
+      console.error("Error adding expense:", err)
+      alert("Error adding expense")
     }
   }
 
-  const deleteEntry = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this entry?")) return
+  const deleteExpense = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this expense?")) return
 
     try {
+      // Simple delete like other working pages
       const { error } = await supabase
-        .from("day_cashbook_entries")
+        .from("expenses")
         .delete()
         .eq("id", id)
 
-      if (error) throw error
+      if (error) {
+        console.error("Delete error:", error)
+        throw new Error("Failed to delete expense")
+      }
 
-      setEntries(entries.filter(e => e.id !== id))
-      alert("Entry deleted successfully!")
-    } catch (error) {
-      console.error("Error deleting entry:", error)
-      alert("Error deleting entry")
+      setExpenses(expenses.filter(e => e.id !== id))
+      alert("Expense deleted successfully!")
+    } catch (err: any) {
+      console.error("Error deleting expense:", err)
+      alert("Error deleting expense")
     }
   }
 
@@ -170,9 +206,7 @@ export function DayCashbook() {
       })
     }
 
-    const totalDr = entries.reduce((sum, entry) => sum + (entry.dr_amount || 0), 0)
-    const totalCr = entries.reduce((sum, entry) => sum + (entry.cr_amount || 0), 0)
-    const cashInHand = totalDr - totalCr
+    const totalAmount = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0)
 
     const dateRange = startDate === endDate 
       ? formatDate(startDate)
@@ -182,7 +216,7 @@ export function DayCashbook() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Day Cash Book</title>
+        <title>Expense Report</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; }
           .header { text-center; margin-bottom: 30px; }
@@ -197,18 +231,18 @@ export function DayCashbook() {
             font-size: 18px; 
             font-weight: bold; 
           }
-          .cashbook-table { 
+          .expense-table { 
             width: 100%; 
             border-collapse: collapse; 
             border: 2px solid black; 
             margin-bottom: 30px; 
           }
-          .cashbook-table th, .cashbook-table td { 
+          .expense-table th, .expense-table td { 
             border: 1px solid black; 
             padding: 8px; 
             text-align: left; 
           }
-          .cashbook-table th { 
+          .expense-table th { 
             background-color: #f0f0f0; 
             font-weight: bold; 
             text-align: center;
@@ -218,27 +252,22 @@ export function DayCashbook() {
             font-weight: bold; 
             background-color: #f0f0f0; 
           }
-          .cash-in-hand { 
+          .total-amount { 
             text-align: center; 
             margin: 30px 0; 
           }
-          .cash-title { 
+          .total-title { 
             font-size: 20px; 
             font-weight: bold; 
             margin-bottom: 10px; 
           }
-          .cash-amount { 
+          .total-value { 
             font-size: 36px; 
             font-weight: bold; 
             border-top: 2px solid black; 
             padding-top: 10px; 
             display: inline-block; 
             min-width: 200px;
-          }
-          .footer { 
-            text-align: right; 
-            margin-top: 40px; 
-            font-size: 12px; 
           }
         </style>
       </head>
@@ -249,35 +278,36 @@ export function DayCashbook() {
             Shojiptorabagh,Fazlu/Section/Azad No-91, North Tower Uttara,Dhaka - 1230,Bangladesh:863/955.0
           </div>
           <div class="period">PERIOD : ${dateRange}</div>
-          <div class="title-oval">DAY CASH BOOK</div>
+          <div class="title-oval">EXPENSE REPORT</div>
         </div>
 
-        <table class="cashbook-table">
+        <table class="expense-table">
           <thead>
             <tr>
-              <th style="width: 60%;">Particulars</th>
-              <th style="width: 20%;">Dr.</th>
-              <th style="width: 20%;">Cr.</th>
+              <th style="width: 15%;">Date</th>
+              <th style="width: 20%;">Category</th>
+              <th style="width: 45%;">Description</th>
+              <th style="width: 20%;">Amount</th>
             </tr>
           </thead>
           <tbody>
-            ${entries.map(entry => `
+            ${expenses.map(expense => `
               <tr>
-                <td>${entry.particular}</td>
-                <td class="amount-cell">${entry.dr_amount > 0 ? entry.dr_amount.toFixed(2) : '0.00'}</td>
-                <td class="amount-cell">${entry.cr_amount > 0 ? entry.cr_amount.toFixed(2) : '0.00'}</td>
+                <td>${formatDate(expense.date)}</td>
+                <td>${expense.category}</td>
+                <td>${expense.description}</td>
+                <td class="amount-cell">৳${expense.amount.toFixed(2)}</td>
               </tr>
             `).join('')}
             <tr class="total-row">
-              <td></td>
-              <td class="amount-cell">${totalDr.toFixed(2)}</td>
-              <td class="amount-cell">${totalCr.toFixed(2)}</td>
+              <td colspan="3" style="text-align: right; font-weight: bold;">TOTAL EXPENSES:</td>
+              <td class="amount-cell">৳${totalAmount.toFixed(2)}</td>
             </tr>
           </tbody>
         </table>
 
-        <div class="cash-in-hand">
-          <div class="cash-title">Cash In Hand  ৳${cashInHand.toFixed(2)}</div>
+        <div class="total-amount">
+          <div class="total-title">Total Expenses ৳${totalAmount.toFixed(2)}</div>
         </div>
 
       </body>
@@ -285,17 +315,25 @@ export function DayCashbook() {
     `
   }
 
-  const totalDr = entries.reduce((sum, entry) => sum + (entry.dr_amount || 0), 0)
-  const totalCr = entries.reduce((sum, entry) => sum + (entry.cr_amount || 0), 0)
+  const totalAmount = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0)
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
+      {/* Error Display */}
+      {error && (
+        <Card className="border-red-200">
+          <CardContent className="p-4">
+            <div className="text-red-600 font-medium">Error: {error}</div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Search Section */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            Day Cashbook Search
+            Expense Search
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -319,11 +357,11 @@ export function DayCashbook() {
               />
             </div>
             <div className="flex items-end gap-2">
-              <Button onClick={() => searchEntries()} disabled={loading}>
+              <Button onClick={() => searchExpenses()} disabled={loading}>
                 <Search className="h-4 w-4 mr-2" />
                 {loading ? "Searching..." : "Search"}
               </Button>
-              <Button onClick={handlePrint} variant="outline">
+              <Button onClick={handlePrint} variant="outline" disabled={expenses.length === 0}>
                 <Printer className="h-4 w-4 mr-2" />
                 Print
               </Button>
@@ -332,13 +370,13 @@ export function DayCashbook() {
         </CardContent>
       </Card>
 
-      {/* Add Entry Section */}
+      {/* Add Expense Section */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Plus className="h-5 w-5" />
-              Add Cashbook Entry
+              Add Expense
             </CardTitle>
             <Button onClick={() => setShowAddForm(!showAddForm)} variant="outline">
               {showAddForm ? "Hide Form" : "Show Form"}
@@ -347,85 +385,89 @@ export function DayCashbook() {
         </CardHeader>
         {showAddForm && (
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
-                <Label htmlFor="entry-date">Date</Label>
+                <Label htmlFor="expense-date">Date</Label>
                 <Input
-                  id="entry-date"
+                  id="expense-date"
                   type="date"
-                  value={newEntry.date}
-                  onChange={(e) => setNewEntry({...newEntry, date: e.target.value})}
+                  value={newExpense.date}
+                  onChange={(e) => setNewExpense({...newExpense, date: e.target.value})}
                 />
               </div>
               <div>
-                <Label htmlFor="particular">Particular</Label>
+                <Label htmlFor="category">Category</Label>
                 <Select 
-                  value={newEntry.particular} 
-                  onValueChange={(value) => setNewEntry({...newEntry, particular: value})}
+                  value={newExpense.category} 
+                  onValueChange={(value) => setNewExpense({...newExpense, category: value})}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select particular" />
+                    <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    {defaultParticulars.map(particular => (
-                      <SelectItem key={particular} value={particular}>
-                        {particular}
+                    {expenseCategories.map(category => (
+                      <SelectItem key={category} value={category}>
+                        {category}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              {newEntry.particular === "Custom" && (
+              {newExpense.category === "Custom" && (
                 <div>
-                  <Label htmlFor="custom-particular">Custom Particular</Label>
+                  <Label htmlFor="custom-category">Custom Category</Label>
                   <Input
-                    id="custom-particular"
-                    value={newEntry.customParticular}
-                    onChange={(e) => setNewEntry({...newEntry, customParticular: e.target.value})}
-                    placeholder="Enter custom particular"
+                    id="custom-category"
+                    value={newExpense.customCategory}
+                    onChange={(e) => setNewExpense({...newExpense, customCategory: e.target.value})}
+                    placeholder="Enter custom category"
                   />
                 </div>
               )}
               <div>
-                <Label htmlFor="dr-amount">Dr. Amount</Label>
+                <Label htmlFor="amount">Amount</Label>
                 <Input
-                  id="dr-amount"
+                  id="amount"
                   type="number"
                   step="0.01"
-                  value={newEntry.dr_amount}
-                  onChange={(e) => setNewEntry({...newEntry, dr_amount: Number(e.target.value) || 0})}
-                />
-              </div>
-              <div>
-                <Label htmlFor="cr-amount">Cr. Amount</Label>
-                <Input
-                  id="cr-amount"
-                  type="number"
-                  step="0.01"
-                  value={newEntry.cr_amount}
-                  onChange={(e) => setNewEntry({...newEntry, cr_amount: Number(e.target.value) || 0})}
+                  value={newExpense.amount}
+                  onChange={(e) => setNewExpense({...newExpense, amount: Number(e.target.value) || 0})}
                 />
               </div>
             </div>
             <div className="mt-4">
-              <Button onClick={addEntry} className="bg-green-600 hover:bg-green-700">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={newExpense.description}
+                onChange={(e) => setNewExpense({...newExpense, description: e.target.value})}
+                placeholder="Enter expense description"
+                rows={3}
+              />
+            </div>
+            <div className="mt-4">
+              <Button onClick={addExpense} className="bg-green-600 hover:bg-green-700">
                 <Plus className="h-4 w-4 mr-2" />
-                Add Entry
+                Add Expense
               </Button>
             </div>
           </CardContent>
         )}
       </Card>
 
-      {/* Entries Table */}
+      {/* Expenses Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Cashbook Entries</CardTitle>
+          <CardTitle>Expense Records</CardTitle>
         </CardHeader>
         <CardContent>
-          {entries.length === 0 ? (
+          {loading ? (
             <div className="text-center py-8 text-muted-foreground">
-              No entries found for the selected date range
+              Loading expenses...
+            </div>
+          ) : expenses.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No expenses found for the selected date range
             </div>
           ) : (
             <>
@@ -433,26 +475,24 @@ export function DayCashbook() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Particulars</TableHead>
-                    <TableHead className="text-right">Dr. Amount</TableHead>
-                    <TableHead className="text-right">Cr. Amount</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
                     <TableHead className="text-center">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell>{entry.date}</TableCell>
-                      <TableCell>{entry.particular}</TableCell>
+                  {expenses.map((expense) => (
+                    <TableRow key={expense.id}>
+                      <TableCell>{expense.date}</TableCell>
+                      <TableCell>{expense.category}</TableCell>
+                      <TableCell>{expense.description}</TableCell>
                       <TableCell className="text-right">
-                        {entry.dr_amount > 0 ? `৳${entry.dr_amount.toFixed(2)}` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.cr_amount > 0 ? `৳${entry.cr_amount.toFixed(2)}` : '-'}
+                        ৳{expense.amount.toFixed(2)}
                       </TableCell>
                       <TableCell className="text-center">
                         <Button
-                          onClick={() => deleteEntry(entry.id!)}
+                          onClick={() => deleteExpense(expense.id!)}
                           variant="outline"
                           size="sm"
                           className="text-red-600 hover:text-red-700"
@@ -463,9 +503,8 @@ export function DayCashbook() {
                     </TableRow>
                   ))}
                   <TableRow className="font-bold bg-gray-50">
-                    <TableCell colSpan={2}>TOTAL</TableCell>
-                    <TableCell className="text-right">৳{totalDr.toFixed(2)}</TableCell>
-                    <TableCell className="text-right">৳{totalCr.toFixed(2)}</TableCell>
+                    <TableCell colSpan={3}>TOTAL EXPENSES</TableCell>
+                    <TableCell className="text-right">৳{totalAmount.toFixed(2)}</TableCell>
                     <TableCell></TableCell>
                   </TableRow>
                 </TableBody>
@@ -473,7 +512,7 @@ export function DayCashbook() {
               
               <div className="mt-6 text-center">
                 <div className="inline-block border-t-2 border-black pt-4">
-                  <div className="text-lg font-semibold">Cash In Hand   ৳{(totalDr - totalCr).toFixed(2)}</div>
+                  <div className="text-lg font-semibold">Total Expenses ৳{totalAmount.toFixed(2)}</div>
                 </div>
               </div>
             </>

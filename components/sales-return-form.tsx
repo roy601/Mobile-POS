@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { Save, X, Search } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -20,16 +20,16 @@ type SaleItem = {
   quantity: number
   unit_price: number
   total_price: number
+  sales_id: number
 }
 
-type SaleHit = {
+type SaleInfo = {
   sale_id: number
   invoice_number?: string | null
   sale_date: string
   total_amount: number | null
   customer_name?: string | null
   customer_phone?: string | null
-  items: SaleItem[] | null
 }
 
 const supabase = createClient()
@@ -37,12 +37,12 @@ const supabase = createClient()
 export function SalesReturnForm() {
   const { toast } = useToast()
 
-  // voucher load state
-  const [invoice, setInvoice] = useState("")
+  // IMEI load state
+  const [imeiNumber, setImeiNumber] = useState("")
   const [loading, setLoading] = useState(false)
 
   // loaded sale & item
-  const [sale, setSale] = useState<SaleHit | null>(null)
+  const [saleInfo, setSaleInfo] = useState<SaleInfo | null>(null)
   const [selectedItem, setSelectedItem] = useState<SaleItem | null>(null)
   const [customerId, setCustomerId] = useState<number | null>(null)
 
@@ -62,53 +62,119 @@ export function SalesReturnForm() {
 
   const totalAmount = useMemo(() => Number((quantity * unitPrice || 0).toFixed(2)), [quantity, unitPrice])
 
-  async function loadModelFromInventory(barcode: string) {
-    // fallback lookup for legacy sold_products rows missing model_number
-    const { data, error } = await supabase
-      .from("inventory")
-      .select("model_number")
-      .eq("barcode", barcode)
-      .limit(1)
-      .maybeSingle()
+  // Set today's date as default return date
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0]
+    setReturnDate(today)
+  }, [])
 
-    if (!error && data?.model_number) {
-      setModelNumber(data.model_number)
-    }
-  }
-
-  async function loadByInvoice() {
-    const term = invoice.trim()
-    if (!term) {
-      toast({ title: "Enter voucher", description: "Please type a voucher/invoice number.", variant: "destructive" })
+  async function loadByImei() {
+    const imei = imeiNumber.trim()
+    if (!imei) {
+      toast({ title: "Enter IMEI", description: "Please enter an IMEI number.", variant: "destructive" })
       return
     }
 
     setLoading(true)
     try {
-      const { data, error } = await supabase.rpc("get_sales_for_return", { search_term: term })
-      if (error) throw error
+      console.log("Searching for IMEI:", imei)
 
-      const list: SaleHit[] = Array.isArray(data) ? data : []
-      if (list.length === 0) {
-        toast({ title: "Not found", description: "No matching sale for that voucher.", variant: "destructive" })
+      // Find the sold product by IMEI (barcode)
+      let productData = null
+
+      // Try exact match first
+      const { data: exactMatch } = await supabase
+        .from("sold_products")
+        .select("id, sales_id, barcode, product_name, model_number, color, quantity, unit_price, total_price")
+        .eq("barcode", imei)
+        .maybeSingle()
+
+      if (exactMatch) {
+        productData = exactMatch
+      } else {
+        // Try case-insensitive match
+        const { data: caseMatch } = await supabase
+          .from("sold_products")
+          .select("id, sales_id, barcode, product_name, model_number, color, quantity, unit_price, total_price")
+          .ilike("barcode", imei)
+          .maybeSingle()
+
+        if (caseMatch) {
+          productData = caseMatch
+        } else {
+          // Try partial match (handles extra characters)
+          const { data: partialMatch } = await supabase
+            .from("sold_products")
+            .select("id, sales_id, barcode, product_name, model_number, color, quantity, unit_price, total_price")
+            .ilike("barcode", `%${imei}%`)
+            .maybeSingle()
+
+          if (partialMatch) {
+            productData = partialMatch
+          }
+        }
+      }
+
+      if (!productData) {
+        toast({ 
+          title: "Not found", 
+          description: `No product found with IMEI "${imei}".`, 
+          variant: "destructive" 
+        })
         return
       }
 
-      const hit =
-        list.find((s) => (s.invoice_number || "").toUpperCase() === term.toUpperCase()) ||
-        list.sort((a, b) => +new Date(b.sale_date) - +new Date(a.sale_date))[0]
+      console.log("Found product:", productData)
 
-      // customer info
-      const cname = hit.customer_name || ""
-      const cphone = hit.customer_phone || ""
-      setCustomerName(cname)
-      setCustomerPhone(cphone)
+      // Get sales data separately to avoid JOIN issues
+      let saleData = null
+      if (productData.sales_id) {
+        const { data: salesData, error: salesError } = await supabase
+          .from("sales")
+          .select("*")
+          .eq("id", productData.sales_id)
+          .maybeSingle()
 
-      if (cphone) {
+        if (!salesError && salesData) {
+          saleData = salesData
+        }
+      }
+
+      // Get customer info from sale_customers table
+      let customerName = ""
+      let customerPhone = ""
+      let customerEmail = ""
+      let foundCustomerId = null
+      
+      if (productData.sales_id) {
+        const { data: saleCustomer, error: customerError } = await supabase
+          .from("sale_customers")
+          .select("customer_id, customer_name, customer_phone, customer_email")
+          .eq("sales_id", productData.sales_id)
+          .maybeSingle()
+
+        if (!customerError && saleCustomer) {
+          customerName = saleCustomer.customer_name || ""
+          customerPhone = saleCustomer.customer_phone || ""
+          customerEmail = saleCustomer.customer_email || ""
+          foundCustomerId = saleCustomer.customer_id
+          console.log("Found customer from sale_customers:", saleCustomer)
+        } else {
+          console.log("No customer found in sale_customers table for sales_id:", productData.sales_id)
+        }
+      }
+
+      setCustomerName(customerName)
+      setCustomerPhone(customerPhone)
+
+      // Use customer ID from sale_customers if available, otherwise try to find by phone
+      if (foundCustomerId) {
+        setCustomerId(foundCustomerId)
+      } else if (customerPhone) {
         const { data: found } = await supabase
           .from("customers")
           .select("id")
-          .eq("phone_number", cphone)
+          .eq("phone_number", customerPhone)
           .limit(1)
           .maybeSingle()
         setCustomerId(found?.id ?? null)
@@ -116,25 +182,37 @@ export function SalesReturnForm() {
         setCustomerId(null)
       }
 
-      // choose first item
-      const first = hit.items?.[0] ?? null
-      setSelectedItem(first || null)
-
-      setProductName(first?.product_name || "")
-      setModelNumber(first?.model_number || "")
-      setColor(first?.color || "")
-      setUnitPrice(first?.unit_price || 0)
+      // Set product info
+      setSelectedItem(productData)
+      setProductName(productData.product_name || "")
+      setModelNumber(productData.model_number || "")
+      setColor(productData.color || "")
+      setUnitPrice(productData.unit_price || 0)
       setQuantity(1)
 
-      // 🔁 If model_number is missing but barcode exists, fetch it from inventory
-      if (!first?.model_number && first?.barcode) {
-        await loadModelFromInventory(first.barcode)
-      }
+      // Set sale info
+      setSaleInfo({
+        sale_id: productData.sales_id || 0,
+        invoice_number: saleData?.invoice_number || saleData?.invoicenumber || "",
+        sale_date: saleData?.sale_date || saleData?.saledate || "",
+        total_amount: saleData?.total_amount || saleData?.totalamount || 0,
+        customer_name: customerName,
+        customer_phone: customerPhone
+      })
 
-      setSale(hit)
-      toast({ title: "Loaded", description: `Loaded sale ${hit.invoice_number || `#${hit.sale_id}`}.` })
+      const displayId = saleData?.invoice_number || (productData.sales_id ? `#${productData.sales_id}` : "Unknown")
+      toast({ 
+        title: "Product loaded successfully", 
+        description: `Loaded ${productData.product_name} from sale ${displayId}` 
+      })
+
     } catch (e: any) {
-      toast({ title: "Error", description: e?.message || "Failed to load voucher.", variant: "destructive" })
+      console.error("Load error:", e)
+      toast({ 
+        title: "Error", 
+        description: e?.message || "Failed to load product.", 
+        variant: "destructive" 
+      })
     } finally {
       setLoading(false)
     }
@@ -144,12 +222,9 @@ export function SalesReturnForm() {
     e.preventDefault()
     if (submitting) return
 
-    if (!sale) {
-      toast({ title: "No sale loaded", description: "Load a voucher first.", variant: "destructive" })
-      return
-    }
+    // Validation
     if (!selectedItem) {
-      toast({ title: "Select item", description: "No sold product selected.", variant: "destructive" })
+      toast({ title: "No product loaded", description: "Load a product first using IMEI.", variant: "destructive" })
       return
     }
     if (!reason || !refundMethod) {
@@ -160,45 +235,108 @@ export function SalesReturnForm() {
       toast({ title: "Invalid quantity", description: "Quantity must be at least 1.", variant: "destructive" })
       return
     }
+    if (!returnDate) {
+      toast({ title: "Missing return date", description: "Please select a return date.", variant: "destructive" })
+      return
+    }
+    if (!customerName.trim()) {
+      toast({ title: "Missing customer name", description: "Customer name is required.", variant: "destructive" })
+      return
+    }
 
     setSubmitting(true)
     try {
-      const payload = {
-        p_original_sale_id: sale.sale_id,
-        p_return_reason: reason,
-        p_refund_method: refundMethod,
-        p_return_items: [
-          {
-            sold_product_id: selectedItem.id,
-            quantity,
-            condition: "good",
-            restock: true,
-          },
-        ],
-        p_customer_id: customerId,
-        p_notes: notes || null,
-      }
+      // Calculate total refund
+      const totalRefund = quantity * unitPrice
 
-      const { data, error } = await supabase.rpc("process_sales_return", payload)
-      if (error) throw error
+      // Create return record
+      const { data: returnRecord, error: returnError } = await supabase
+        .from("sales_returns")
+        .insert({
+          original_sale_id: saleInfo?.sale_id || selectedItem.sales_id,
+          return_date: returnDate,
+          return_reason: reason,
+          refund_method: refundMethod,
+          customer_name: customerName.trim(),
+          customer_phone: customerPhone.trim() || null,
+          notes: notes || null,
+          total_refund: totalRefund,
+          status: 'completed'
+        })
+        .select()
+        .single()
 
-      if (!data?.success) {
-        toast({ title: "Error", description: data?.message || "Return failed.", variant: "destructive" })
-        return
+      if (returnError) throw returnError
+
+      // Create return item record
+      const { error: returnItemError } = await supabase
+        .from("return_items")
+        .insert({
+          return_id: returnRecord.id,
+          sold_product_id: selectedItem.id,
+          quantity: quantity,
+          unit_price: unitPrice,
+          total_amount: totalRefund,
+          condition: 'good'
+        })
+
+      if (returnItemError) throw returnItemError
+
+      // Restock to inventory
+      if (selectedItem.barcode) {
+        // Check if product exists in inventory
+        const { data: existingInventory } = await supabase
+          .from("inventory")
+          .select("id, quantity")
+          .eq("barcode", selectedItem.barcode)
+          .maybeSingle()
+
+        if (existingInventory) {
+          // Update existing inventory
+          const { error: updateError } = await supabase
+            .from("inventory")
+            .update({ 
+              quantity: existingInventory.quantity + quantity,
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", existingInventory.id)
+
+          if (updateError) throw updateError
+        } else {
+          // Create new inventory record
+          const { error: insertError } = await supabase
+            .from("inventory")
+            .insert({
+              barcode: selectedItem.barcode,
+              product_name: selectedItem.product_name,
+              model_number: selectedItem.model_number,
+              color: selectedItem.color,
+              quantity: quantity,
+              unit_price: unitPrice,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+
+          if (insertError) throw insertError
+        }
       }
 
       toast({
-        title: "Return processed",
-        description: `Refund ৳${Number(data.total_refund).toFixed(2)} • Return #${data.return_id}`,
+        title: "Return processed successfully",
+        description: `Refund ৳${totalRefund.toFixed(2)} • Return #${returnRecord.id} • Item added back to inventory`,
       })
 
-      // keep voucher loaded; clear mutable fields
+      // Reset form for next return
       setQuantity(1)
       setReason("")
       setRefundMethod("")
       setNotes("")
+      const today = new Date().toISOString().split('T')[0]
+      setReturnDate(today)
+
     } catch (err: any) {
-      toast({ title: "Error", description: err?.message ?? "Unexpected error.", variant: "destructive" })
+      console.error("Process return error:", err)
+      toast({ title: "Error", description: err?.message ?? "Unexpected error occurred.", variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
@@ -212,19 +350,22 @@ export function SalesReturnForm() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2">
-            <Label htmlFor="voucher">Voucher / Invoice #</Label>
+            <Label htmlFor="imei">IMEI Number</Label>
             <div className="flex gap-2">
               <Input
-                id="voucher"
-                placeholder="Enter voucher/invoice"
-                value={invoice}
-                onChange={(e) => setInvoice(e.target.value)}
+                id="imei"
+                placeholder="Enter IMEI number"
+                value={imeiNumber}
+                onChange={(e) => setImeiNumber(e.target.value)}
               />
-              <Button type="button" variant="outline" onClick={loadByInvoice} disabled={loading}>
+              <Button type="button" variant="outline" onClick={loadByImei} disabled={loading}>
                 <Search className="mr-2 h-4 w-4" />
                 {loading ? "Loading..." : "Load"}
               </Button>
             </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Enter the IMEI number to load product and customer details
+            </p>
           </div>
         </div>
 
@@ -233,7 +374,7 @@ export function SalesReturnForm() {
             <Label htmlFor="customer-name">Customer Name*</Label>
             <Input
               id="customer-name"
-              placeholder="Auto-filled from voucher"
+              placeholder="Auto-filled from sale record"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               required
@@ -243,7 +384,7 @@ export function SalesReturnForm() {
             <Label htmlFor="customer-phone">Phone Number</Label>
             <Input
               id="customer-phone"
-              placeholder="Auto-filled from voucher"
+              placeholder="Auto-filled from sale record"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
             />
@@ -260,7 +401,7 @@ export function SalesReturnForm() {
             <Label htmlFor="product-name">Product Name*</Label>
             <Input
               id="product-name"
-              placeholder="Auto-filled from voucher"
+              placeholder="Auto-filled from IMEI lookup"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
               required
@@ -270,7 +411,7 @@ export function SalesReturnForm() {
             <Label htmlFor="model">Model Number</Label>
             <Input
               id="model"
-              placeholder="Auto-filled from voucher"
+              placeholder="Auto-filled from IMEI lookup"
               value={modelNumber}
               onChange={(e) => setModelNumber(e.target.value)}
             />
@@ -279,15 +420,30 @@ export function SalesReturnForm() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
+            <Label htmlFor="color">Color</Label>
+            <Input
+              id="color"
+              placeholder="Auto-filled from IMEI lookup"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+            />
+          </div>
+          <div>
             <Label htmlFor="quantity">Quantity*</Label>
             <Input
               id="quantity"
               type="number"
               min={1}
+              max={selectedItem?.quantity || 999}
               value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+              onChange={(e) => setQuantity(Math.max(1, Math.min(selectedItem?.quantity || 999, Number(e.target.value) || 1)))}
               required
             />
+            {selectedItem && (
+              <p className="text-xs text-gray-500 mt-1">
+                Max available: {selectedItem.quantity}
+              </p>
+            )}
           </div>
           <div>
             <Label htmlFor="unit-price">Unit Price*</Label>
@@ -299,10 +455,11 @@ export function SalesReturnForm() {
               required
             />
           </div>
-          <div>
-            <Label htmlFor="total-amount">Total Amount</Label>
-            <Input id="total-amount" type="number" value={totalAmount} readOnly />
-          </div>
+        </div>
+
+        <div>
+          <Label htmlFor="total-amount">Total Amount</Label>
+          <Input id="total-amount" type="number" value={totalAmount} readOnly className="bg-gray-50" />
         </div>
       </div>
 
@@ -322,6 +479,7 @@ export function SalesReturnForm() {
                 <SelectItem value="wrong_item">Wrong Item</SelectItem>
                 <SelectItem value="not_satisfied">Customer Not Satisfied</SelectItem>
                 <SelectItem value="damaged">Damaged in Transit</SelectItem>
+                <SelectItem value="warranty_claim">Warranty Claim</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
@@ -335,6 +493,9 @@ export function SalesReturnForm() {
               onChange={(e) => setReturnDate(e.target.value)}
               required
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Defaults to today, can be changed if needed
+            </p>
           </div>
         </div>
 
@@ -342,7 +503,7 @@ export function SalesReturnForm() {
           <Label htmlFor="notes">Notes</Label>
           <Textarea
             id="notes"
-            placeholder="Additional notes about the return"
+            placeholder="Additional notes about the return (optional)"
             className="h-20"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -364,27 +525,28 @@ export function SalesReturnForm() {
               <SelectContent>
                 <SelectItem value="cash">Cash</SelectItem>
                 <SelectItem value="card">Credit/Debit Card</SelectItem>
-                <SelectItem value="mobile_banking">Mobile Banking</SelectItem>
+                <SelectItem value="mobile_banking">Mobile Banking (bKash/Nagad)</SelectItem>
+                <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
                 <SelectItem value="store_credit">Store Credit</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div>
             <Label htmlFor="refund-amount">Refund Amount*</Label>
-            <Input id="refund-amount" type="number" value={totalAmount} readOnly />
+            <Input id="refund-amount" type="number" value={totalAmount} readOnly className="bg-gray-50" />
           </div>
         </div>
       </div>
 
       {/* Form Actions */}
-      <div className="flex justify-end space-x-2 pt-4 sticky bottom-0 bg-white/80 backdrop-blur">
-        <Button type="button" variant="outline">
+      <div className="flex justify-end space-x-2 pt-4 sticky bottom-0 bg-white/80 backdrop-blur border-t">
+        <Button type="button" variant="outline" onClick={() => window.location.reload()}>
           <X className="mr-2 h-4 w-4" />
-          Cancel
+          Reset Form
         </Button>
-        <Button type="submit" className="bg-green-600 hover:bg-green-700" disabled={submitting}>
+        <Button type="submit" className="bg-green-600 hover:bg-green-700" disabled={submitting || !selectedItem}>
           <Save className="mr-2 h-4 w-4" />
-          {submitting ? "Processing..." : "Process Return"}
+          {submitting ? "Processing Return..." : "Process Return"}
         </Button>
       </div>
     </form>

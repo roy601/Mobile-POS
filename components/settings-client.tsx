@@ -37,7 +37,7 @@ type User = {
 
 export function SettingsClient() {
   const { toast } = useToast()
-  const { currentUser, isAdmin, hasPermission } = useRole()
+  const { user, isAdmin, hasPermission } = useRole()
   const [showAddUser, setShowAddUser] = useState(false)
   const [showEditUser, setShowEditUser] = useState(false)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
