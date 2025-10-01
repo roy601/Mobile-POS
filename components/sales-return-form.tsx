@@ -260,7 +260,7 @@ export function SalesReturnForm() {
           customer_name: customerName.trim(),
           customer_phone: customerPhone.trim() || null,
           notes: notes || null,
-          total_refund: totalRefund,
+          total_refund_amount: totalRefund,
           status: 'completed'
         })
         .select()

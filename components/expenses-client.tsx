@@ -14,26 +14,50 @@ import { createClient } from "@/utils/supabase/component"
 const supabase = createClient()
 
 type ExpenseEntry = {
-  id?: number
+  id?: string
   date: string
   category: string
+  custom_category?: string
   description: string
   amount: number
+  payment_method: string
+  reference?: string
+  notes?: string
+  user_id?: string
+  organization_id?: string
   created_at?: string
+  updated_at?: string
 }
 
+// Updated categories to match your simplified database schema
 const expenseCategories = [
-  "Office Supplies",
-  "Utilities",
-  "Rent",
-  "Transportation",
-  "Marketing",
-  "Equipment",
-  "Maintenance",
-  "Staff Expenses",
-  "Professional Services",
-  "Insurance",
-  "Custom"
+  { value: "salaries", label: "Salaries" },
+  { value: "printer_papers", label: "Printer Papers" },
+  { value: "water_bill", label: "Water Bill" },
+  { value: "mobile_bill", label: "Mobile Bill" },
+  { value: "internet_bill", label: "Internet Bill" },
+  { value: "land_bill", label: "Land Bill" },
+  { value: "bank_charge", label: "Bank Charge" },
+  { value: "shopping_bag", label: "Shopping Bag" },
+  { value: "office_supplies", label: "Office Supplies" },
+  { value: "utilities", label: "Utilities" },
+  { value: "rent", label: "Rent" },
+  { value: "transportation", label: "Transportation" },
+  { value: "marketing", label: "Marketing" },
+  { value: "equipment", label: "Equipment" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "staff_expenses", label: "Staff Expenses" },
+  { value: "professional_services", label: "Professional Services" },
+  { value: "insurance", label: "Insurance" },
+  { value: "other", label: "Other (Custom)" }
+]
+
+// Payment methods from your schema
+const paymentMethods = [
+  { value: "cash", label: "Cash" },
+  { value: "card", label: "Card" },
+  { value: "mobile_banking", label: "Mobile Banking" },
+  { value: "bank_transfer", label: "Bank Transfer" }
 ]
 
 export function ExpensesClient() {
@@ -52,7 +76,9 @@ export function ExpensesClient() {
     category: "",
     customCategory: "",
     description: "",
-    amount: 0
+    amount: 0,
+    payment_method: "",
+    notes: ""
   })
 
   useEffect(() => {
@@ -76,7 +102,22 @@ export function ExpensesClient() {
     setError(null)
     
     try {
-      // Simple direct query like other working pages
+      // Check authentication first
+      const { data: userData, error: userError } = await supabase.auth.getUser()
+      
+      if (userError) {
+        console.error("Auth error:", userError)
+        throw new Error("Please sign in to view expenses")
+      }
+
+      if (!userData?.user) {
+        console.error("No authenticated user found")
+        throw new Error("Please sign in to view expenses")
+      }
+
+      console.log("Searching expenses for user:", userData.user.id)
+
+      // Build query - RLS policies will handle user filtering
       let query = supabase
         .from("expenses")
         .select("*")
@@ -91,12 +132,25 @@ export function ExpensesClient() {
 
       const { data, error: queryError } = await query
 
+      console.log("Search result:", { data, queryError, count: data?.length })
+
       if (queryError) {
-        console.error("Database query error:", queryError)
-        throw new Error("Failed to load expenses")
+        console.error("Database query error:", {
+          message: queryError.message,
+          details: queryError.details,
+          code: queryError.code
+        })
+        
+        if (queryError.message?.includes("row-level security")) {
+          throw new Error("Access denied. Please check your permissions.")
+        } else {
+          throw new Error(`Database error: ${queryError.message}`)
+        }
       }
 
+      console.log(`Found ${data?.length || 0} expenses`)
       setExpenses(data || [])
+      
     } catch (err: any) {
       const errorMessage = err?.message || "Error loading expenses"
       console.error("Error loading expenses:", err)
@@ -109,10 +163,36 @@ export function ExpensesClient() {
 
   const addExpense = async () => {
     try {
-      const category = newExpense.category === "Custom" ? newExpense.customCategory : newExpense.category
+      // Check authentication (still needed for RLS policies)
+      const { data: userData, error: userError } = await supabase.auth.getUser()
       
-      if (!category.trim()) {
-        alert("Please select or enter a category")
+      if (userError) {
+        console.error("Auth error:", userError)
+        alert("Authentication error. Please sign in.")
+        return
+      }
+
+      if (!userData?.user) {
+        console.error("No authenticated user found")
+        alert("Please sign in to add expenses.")
+        return
+      }
+
+      console.log("Adding expense for authenticated user")
+
+      // Validation based on your simplified schema constraints
+      let finalCategory = newExpense.category
+      let customCategory = null
+
+      if (newExpense.category === "other") {
+        if (!newExpense.customCategory.trim()) {
+          alert("Please enter a custom category when selecting 'other'")
+          return
+        }
+        finalCategory = "other"
+        customCategory = newExpense.customCategory.trim()
+      } else if (!newExpense.category) {
+        alert("Please select a category")
         return
       }
 
@@ -122,27 +202,65 @@ export function ExpensesClient() {
       }
 
       if (newExpense.amount <= 0) {
-        alert("Please enter a valid amount")
+        alert("Please enter a valid amount greater than 0")
         return
       }
 
-      const expenseToAdd = {
-        date: newExpense.date,
-        category: category.trim(),
-        description: newExpense.description.trim(),
-        amount: newExpense.amount
+      if (!newExpense.payment_method) {
+        alert("Please select a payment method")
+        return
       }
 
-      // Simple insert like other working pages
+      // Build expense object according to your simplified schema (no user_id or organization_id)
+      const expenseToAdd = {
+        date: newExpense.date,
+        category: finalCategory,
+        custom_category: customCategory,
+        description: newExpense.description.trim(),
+        amount: newExpense.amount,
+        payment_method: newExpense.payment_method,
+        notes: newExpense.notes || null
+        // No user_id or organization_id - these have been removed
+      }
+
+      console.log("Inserting expense:", expenseToAdd)
+
       const { data, error } = await supabase
         .from("expenses")
         .insert(expenseToAdd)
         .select()
         .single()
 
+      console.log("Insert result:", { data, error })
+
       if (error) {
-        console.error("Insert error:", error)
-        throw new Error("Failed to add expense")
+        console.error("Insert error details:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
+
+        // Handle specific errors
+        if (error.message?.includes("row-level security")) {
+          alert("Access denied. Please check database permissions.")
+        } else if (error.message?.includes("payment_method_check")) {
+          alert("Invalid payment method. Please select: cash, card, mobile_banking, or bank_transfer")
+        } else if (error.message?.includes("category_check")) {
+          alert("Invalid category. Please select from the available options.")
+        } else if (error.message?.includes("amount_check")) {
+          alert("Amount must be greater than 0")
+        } else if (error.message?.includes("custom_category")) {
+          alert("Custom category is required when selecting 'other'")
+        } else {
+          alert(`Failed to add expense: ${error.message}`)
+        }
+        return
+      }
+
+      if (!data) {
+        alert("Failed to add expense: No data returned")
+        return
       }
 
       // Add to local state
@@ -154,21 +272,24 @@ export function ExpensesClient() {
         category: "",
         customCategory: "",
         description: "",
-        amount: 0
+        amount: 0,
+        payment_method: "",
+        notes: ""
       })
       
+      console.log("Expense added successfully:", data)
       alert("Expense added successfully!")
+      
     } catch (err: any) {
-      console.error("Error adding expense:", err)
-      alert("Error adding expense")
+      console.error("Unexpected error adding expense:", err)
+      alert(`Error adding expense: ${err?.message || "Unknown error"}`)
     }
   }
 
-  const deleteExpense = async (id: number) => {
+  const deleteExpense = async (id: string) => {
     if (!confirm("Are you sure you want to delete this expense?")) return
 
     try {
-      // Simple delete like other working pages
       const { error } = await supabase
         .from("expenses")
         .delete()
@@ -286,7 +407,8 @@ export function ExpensesClient() {
             <tr>
               <th style="width: 15%;">Date</th>
               <th style="width: 20%;">Category</th>
-              <th style="width: 45%;">Description</th>
+              <th style="width: 20%;">Payment Method</th>
+              <th style="width: 25%;">Description</th>
               <th style="width: 20%;">Amount</th>
             </tr>
           </thead>
@@ -294,13 +416,14 @@ export function ExpensesClient() {
             ${expenses.map(expense => `
               <tr>
                 <td>${formatDate(expense.date)}</td>
-                <td>${expense.category}</td>
+                <td>${expense.category === 'other' ? expense.custom_category || 'Other' : expense.category}</td>
+                <td>${expense.payment_method}</td>
                 <td>${expense.description}</td>
                 <td class="amount-cell">৳${expense.amount.toFixed(2)}</td>
               </tr>
             `).join('')}
             <tr class="total-row">
-              <td colspan="3" style="text-align: right; font-weight: bold;">TOTAL EXPENSES:</td>
+              <td colspan="4" style="text-align: right; font-weight: bold;">TOTAL EXPENSES:</td>
               <td class="amount-cell">৳${totalAmount.toFixed(2)}</td>
             </tr>
           </tbody>
@@ -387,16 +510,18 @@ export function ExpensesClient() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
-                <Label htmlFor="expense-date">Date</Label>
+                <Label htmlFor="expense-date">Date*</Label>
                 <Input
                   id="expense-date"
                   type="date"
                   value={newExpense.date}
                   onChange={(e) => setNewExpense({...newExpense, date: e.target.value})}
+                  required
                 />
               </div>
+              
               <div>
-                <Label htmlFor="category">Category</Label>
+                <Label htmlFor="category">Category*</Label>
                 <Select 
                   value={newExpense.category} 
                   onValueChange={(value) => setNewExpense({...newExpense, category: value})}
@@ -406,45 +531,84 @@ export function ExpensesClient() {
                   </SelectTrigger>
                   <SelectContent>
                     {expenseCategories.map(category => (
-                      <SelectItem key={category} value={category}>
-                        {category}
+                      <SelectItem key={category.value} value={category.value}>
+                        {category.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              {newExpense.category === "Custom" && (
+
+              {newExpense.category === "other" && (
                 <div>
-                  <Label htmlFor="custom-category">Custom Category</Label>
+                  <Label htmlFor="custom-category">Custom Category*</Label>
                   <Input
                     id="custom-category"
                     value={newExpense.customCategory}
                     onChange={(e) => setNewExpense({...newExpense, customCategory: e.target.value})}
                     placeholder="Enter custom category"
+                    required
                   />
                 </div>
               )}
+
               <div>
-                <Label htmlFor="amount">Amount</Label>
+                <Label htmlFor="payment-method">Payment Method*</Label>
+                <Select 
+                  value={newExpense.payment_method} 
+                  onValueChange={(value) => setNewExpense({...newExpense, payment_method: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select payment method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map(method => (
+                      <SelectItem key={method.value} value={method.value}>
+                        {method.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="amount">Amount (৳)*</Label>
                 <Input
                   id="amount"
                   type="number"
                   step="0.01"
+                  min="0.01"
                   value={newExpense.amount}
                   onChange={(e) => setNewExpense({...newExpense, amount: Number(e.target.value) || 0})}
+                  placeholder="0.00"
+                  required
                 />
               </div>
             </div>
+
             <div className="mt-4">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">Description*</Label>
               <Textarea
                 id="description"
                 value={newExpense.description}
                 onChange={(e) => setNewExpense({...newExpense, description: e.target.value})}
                 placeholder="Enter expense description"
                 rows={3}
+                required
               />
             </div>
+
+            <div className="mt-4">
+              <Label htmlFor="notes">Notes (Optional)</Label>
+              <Textarea
+                id="notes"
+                value={newExpense.notes}
+                onChange={(e) => setNewExpense({...newExpense, notes: e.target.value})}
+                placeholder="Additional notes about this expense"
+                rows={2}
+              />
+            </div>
+
             <div className="mt-4">
               <Button onClick={addExpense} className="bg-green-600 hover:bg-green-700">
                 <Plus className="h-4 w-4 mr-2" />
@@ -476,6 +640,7 @@ export function ExpensesClient() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Category</TableHead>
+                    <TableHead>Payment Method</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead className="text-center">Actions</TableHead>
@@ -485,7 +650,13 @@ export function ExpensesClient() {
                   {expenses.map((expense) => (
                     <TableRow key={expense.id}>
                       <TableCell>{expense.date}</TableCell>
-                      <TableCell>{expense.category}</TableCell>
+                      <TableCell>
+                        {expense.category === 'other' 
+                          ? expense.custom_category || 'Other'
+                          : expense.category
+                        }
+                      </TableCell>
+                      <TableCell>{expense.payment_method}</TableCell>
                       <TableCell>{expense.description}</TableCell>
                       <TableCell className="text-right">
                         ৳{expense.amount.toFixed(2)}
@@ -503,7 +674,7 @@ export function ExpensesClient() {
                     </TableRow>
                   ))}
                   <TableRow className="font-bold bg-gray-50">
-                    <TableCell colSpan={3}>TOTAL EXPENSES</TableCell>
+                    <TableCell colSpan={4}>TOTAL EXPENSES</TableCell>
                     <TableCell className="text-right">৳{totalAmount.toFixed(2)}</TableCell>
                     <TableCell></TableCell>
                   </TableRow>

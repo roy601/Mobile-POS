@@ -1,157 +1,364 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Calendar, Plus, Printer, Search, Trash2 } from "lucide-react"
+import { Calendar, Printer, RefreshCw, Lock } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { createClient } from "@/utils/supabase/component"
+import { useToast } from "@/hooks/use-toast"
 
 const supabase = createClient()
 
 type CashbookEntry = {
-  id?: number
-  date: string
-  particular: string
-  dr_amount: number
-  cr_amount: number
-  created_at?: string
+  particulars: string
+  debit: number
+  credit: number
 }
 
-const defaultParticulars = [
-  "BFC",
-  "Total Sales Amount", 
-  "Bank Cash",
-  "Sales Dues",
-  "Total Purchase",
-  "Custom" // This will allow typing custom particular
-]
+type CashbookData = {
+  date: string
+  entries: CashbookEntry[]
+  totalDebit: number
+  totalCredit: number
+  cashInHand: number
+}
 
 export function DayCashbook() {
-  const [entries, setEntries] = useState<CashbookEntry[]>([])
+  const { toast } = useToast()
+  
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  )
+  const [cashbookData, setCashbookData] = useState<CashbookData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isAuthorized, setIsAuthorized] = useState(false)
   
-  // Search filters
-  const [startDate, setStartDate] = useState("")
-  const [endDate, setEndDate] = useState("")
-  
-  // Add entry form
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [newEntry, setNewEntry] = useState({
-    date: new Date().toISOString().split('T')[0],
-    particular: "",
-    customParticular: "",
-    dr_amount: 0,
-    cr_amount: 0
-  })
+  // Edit states
+  const [editingEntry, setEditingEntry] = useState<number | null>(null)
+  const [showAddEntry, setShowAddEntry] = useState(false)
+  const [newEntry, setNewEntry] = useState({ particulars: "", debit: 0, credit: 0 })
+  const [editEntry, setEditEntry] = useState({ particulars: "", debit: 0, credit: 0 })
 
+  // Check user authorization (only admin can edit)
   useEffect(() => {
-    // Load today's entries by default
-    const today = new Date().toISOString().split('T')[0]
-    setStartDate(today)
-    setEndDate(today)
-    searchEntries(today, today)
+    checkAuthorization()
   }, [])
 
-  const searchEntries = async (start?: string, end?: string) => {
-    const searchStart = start || startDate
-    const searchEnd = end || endDate
-    
-    if (!searchStart) return
-
-    setLoading(true)
+  const checkAuthorization = async () => {
     try {
-      let query = supabase
-        .from("day_cashbook_entries")
-        .select("*")
-        .gte("date", searchStart)
-        .order("date", { ascending: true })
-        .order("created_at", { ascending: true })
+      const { data: userData, error } = await supabase.auth.getUser()
+      if (error) throw error
+      
+      // For now, assume authenticated users can edit
+      // In production, check for specific admin role
+      setIsAuthorized(!!userData?.user) // Set to true if user is logged in
+    } catch (err) {
+      console.error("Auth check error:", err)
+      setIsAuthorized(false)
+    }
+  }
 
-      if (searchEnd && searchEnd !== searchStart) {
-        query = query.lte("date", searchEnd)
-      } else {
-        query = query.lte("date", searchStart)
+  useEffect(() => {
+    if (selectedDate) {
+      loadCashbookData(selectedDate)
+    }
+  }, [selectedDate])
+
+  const loadCashbookData = async (date: string) => {
+    setLoading(true)
+    setError(null)
+    
+    try {
+      // Get previous day's closing balance as BFC
+      const prevDate = new Date(date)
+      prevDate.setDate(prevDate.getDate() - 1)
+      const previousDate = prevDate.toISOString().split('T')[0]
+      
+      // Initialize default data in case of errors
+      let salesData: {
+        totalSalesAmount: number
+        cashAmount: number
+        bankAmount: number
+        duesAmount: number
+        individualSales: any[]
+      } = { 
+        totalSalesAmount: 0, 
+        cashAmount: 0, 
+        bankAmount: 0, 
+        duesAmount: 0, 
+        individualSales: [] 
+      }
+      let purchaseData = { totalAmount: 0 }
+      let returnsData = { salesReturns: 0, purchaseReturns: 0 }
+      let expensesData: {
+        individualExpenses: any[]
+      } = {
+        individualExpenses: []
+      }
+      let bfcAmount = 0
+
+      try {
+        const results = await Promise.all([
+          getSalesData(date).catch(err => {
+            console.warn('Sales data error:', err)
+            return salesData
+          }),
+          getPurchaseData(date).catch(err => {
+            console.warn('Purchase data error:', err)
+            return purchaseData
+          }),
+          getReturnsData(date).catch(err => {
+            console.warn('Returns data error:', err)
+            return returnsData
+          }),
+          getExpensesData(date).catch(err => {
+            console.warn('Expenses data error:', err)
+            return expensesData
+          }),
+          getPreviousBalance(previousDate).catch(err => {
+            console.warn('Previous balance error:', err)
+            return 0
+          })
+        ])
+
+        salesData = results[0] || salesData
+        purchaseData = results[1] || purchaseData
+        returnsData = results[2] || returnsData
+        expensesData = results[3] || expensesData
+        bfcAmount = results[4] || 0
+      } catch (err) {
+        console.error('Error loading data:', err)
+        // Continue with default values
+      }
+      
+      // Build entries array with fixed summary entries first
+      const entries: CashbookEntry[] = [
+        {
+          particulars: "BFC",
+          debit: bfcAmount,
+          credit: 0
+        },
+        {
+          particulars: "Total Sales Amount",
+          debit: salesData.totalSalesAmount || 0,
+          credit: 0
+        },
+        {
+          particulars: "Bank Cash",
+          debit: salesData.cashAmount || 0,
+          credit: salesData.bankAmount || 0
+        },
+        {
+          particulars: "Sales Dues",
+          debit: 0,
+          credit: salesData.duesAmount || 0
+        },
+        {
+          particulars: "Total Purchase Amount",
+          debit: 0,
+          credit: purchaseData.totalAmount || 0
+        }
+      ]
+
+      // Add individual sales transactions
+      if (salesData.individualSales && salesData.individualSales.length > 0) {
+        salesData.individualSales.forEach((sale: any) => {
+          entries.push({
+            particulars: `Sale #${sale.id} - ${sale.customer_name || 'Walk-in Customer'}`,
+            debit: sale.total_amount || 0,
+            credit: 0
+          })
+        })
       }
 
-      const { data, error } = await query
+      // Add individual expense transactions
+      if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
+        expensesData.individualExpenses.forEach((expense: any) => {
+          const category = expense.custom_category || expense.category || 'Other'
+          entries.push({
+            particulars: `${category} - ${expense.description}`,
+            debit: 0,
+            credit: expense.amount || 0
+          })
+        })
+      }
 
-      if (error) throw error
-      setEntries(data || [])
-    } catch (error) {
-      console.error("Error loading entries:", error)
-      alert("Error loading entries")
+      // Calculate totals
+      const totalDebit = entries.reduce((sum, entry) => sum + entry.debit, 0)
+      const totalCredit = entries.reduce((sum, entry) => sum + entry.credit, 0)
+      const cashInHand = totalDebit - totalCredit
+
+      const data: CashbookData = {
+        date: date,
+        entries: entries,
+        totalDebit: totalDebit,
+        totalCredit: totalCredit,
+        cashInHand: cashInHand
+      }
+
+      setCashbookData(data)
+      
+    } catch (err: any) {
+      console.error("Error loading cashbook data:", err)
+      setError(err.message || "Failed to load cashbook data")
+      toast({
+        title: "Error",
+        description: "Failed to load cashbook data",
+        variant: "destructive"
+      })
     } finally {
       setLoading(false)
     }
   }
 
-  const addEntry = async () => {
+  const getSalesData = async (date: string) => {
     try {
-      const particular = newEntry.particular === "Custom" ? newEntry.customParticular : newEntry.particular
-      
-      if (!particular.trim()) {
-        alert("Please enter a particular")
-        return
-      }
-
-      const entryToAdd = {
-        date: newEntry.date,
-        particular: particular.trim(),
-        dr_amount: newEntry.dr_amount,
-        cr_amount: newEntry.cr_amount
-      }
-
       const { data, error } = await supabase
-        .from("day_cashbook_entries")
-        .insert(entryToAdd)
-        .select()
-        .single()
+        .from("sales")
+        .select("id, total_amount, cash_received, card_received, bank_transfer_received, bkash_received, nagad_received, rocket_received, upay_received, due_amount, invoice_number")
+        .gte("created_at", date)
+        .lt("created_at", `${date}T23:59:59.999Z`)
+        .eq("status", "completed")
 
-      if (error) throw error
+      if (error) {
+        console.error("Sales data error:", error)
+        throw error
+      }
 
-      // Add to local state
-      setEntries([...entries, data])
+      const sales = data || []
       
-      // Reset form
-      setNewEntry({
-        date: newEntry.date, // Keep the same date
-        particular: "",
-        customParticular: "",
-        dr_amount: 0,
-        cr_amount: 0
-      })
-      
-      alert("Entry added successfully!")
+      const totals = sales.reduce((acc, sale) => {
+        const totalAmount = sale.total_amount || 0
+        const cashAmount = sale.cash_received || 0
+        const bankAmount = (sale.card_received || 0) + (sale.bank_transfer_received || 0) + 
+                          (sale.bkash_received || 0) + (sale.nagad_received || 0) + 
+                          (sale.rocket_received || 0) + (sale.upay_received || 0)
+        const duesAmount = sale.due_amount || 0
+
+        return {
+          totalSalesAmount: acc.totalSalesAmount + totalAmount,
+          cashAmount: acc.cashAmount + cashAmount,
+          bankAmount: acc.bankAmount + bankAmount,
+          duesAmount: acc.duesAmount + duesAmount
+        }
+      }, { totalSalesAmount: 0, cashAmount: 0, bankAmount: 0, duesAmount: 0 })
+
+      // Add individual sales for detailed entries (simplified)
+      const individualSales = sales.map(sale => ({
+        id: sale.invoice_number || sale.id,
+        total_amount: sale.total_amount || 0,
+        customer_name: `Customer #${sale.id}` // Simplified customer name
+      }))
+
+      return {
+        ...totals,
+        individualSales
+      }
     } catch (error) {
-      console.error("Error adding entry:", error)
-      alert("Error adding entry")
+      console.error("getSalesData error:", error)
+      return {
+        totalSalesAmount: 0,
+        cashAmount: 0,
+        bankAmount: 0,
+        duesAmount: 0,
+        individualSales: []
+      }
     }
   }
 
-  const deleteEntry = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this entry?")) return
-
+  const getPurchaseData = async (date: string) => {
     try {
-      const { error } = await supabase
-        .from("day_cashbook_entries")
-        .delete()
-        .eq("id", id)
+      const { data, error } = await supabase
+        .from("purchases")
+        .select("cost_price")
+        .gte("created_at", date)
+        .lt("created_at", `${date}T23:59:59.999Z`)
 
-      if (error) throw error
+      if (error) {
+        console.error("Purchase data error:", error)
+        return { totalAmount: 0 }
+      }
 
-      setEntries(entries.filter(e => e.id !== id))
-      alert("Entry deleted successfully!")
+      const totalAmount = (data || []).reduce((sum, purchase) => sum + (purchase.cost_price || 0), 0)
+      return { totalAmount }
     } catch (error) {
-      console.error("Error deleting entry:", error)
-      alert("Error deleting entry")
+      console.error("getPurchaseData error:", error)
+      return { totalAmount: 0 }
     }
+  }
+
+  const getReturnsData = async (date: string) => {
+    try {
+      const [salesReturns, purchaseReturns] = await Promise.all([
+        supabase
+          .from("sales_returns")
+          .select("total_refund")
+          .gte("return_date", date)
+          .lt("return_date", `${date}T23:59:59.999Z`)
+          .then(result => result.error ? { data: [] } : result),
+        supabase
+          .from("purchase_returns")
+          .select("total_credit_amount")
+          .gte("return_date", date)
+          .lt("return_date", `${date}T23:59:59.999Z`)
+          .then(result => result.error ? { data: [] } : result)
+      ])
+
+      return {
+        salesReturns: (salesReturns.data || []).reduce((sum, ret) => sum + (ret.total_refund || 0), 0),
+        purchaseReturns: (purchaseReturns.data || []).reduce((sum, ret) => sum + (ret.total_credit_amount || 0), 0)
+      }
+    } catch (error) {
+      console.error("getReturnsData error:", error)
+      return { salesReturns: 0, purchaseReturns: 0 }
+    }
+  }
+
+  const getExpensesData = async (date: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("expenses")
+        .select("id, amount, category, custom_category, description, created_at")
+        .gte("date", date)
+        .lte("date", date)
+        .order("created_at", { ascending: true })
+
+      if (error) {
+        console.error("Expenses data error:", error)
+        return { individualExpenses: [] }
+      }
+
+      const expenses = data || []
+
+      // Return individual expenses for detailed entries
+      const individualExpenses = expenses.map(expense => ({
+        id: expense.id,
+        amount: expense.amount || 0,
+        category: expense.category || 'Other',
+        custom_category: expense.custom_category,
+        description: expense.description || 'No description',
+        created_at: expense.created_at
+      }))
+
+      return { individualExpenses }
+    } catch (error) {
+      console.error("getExpensesData error:", error)
+      return { individualExpenses: [] }
+    }
+  }
+
+  const getPreviousBalance = async (date: string) => {
+    // Start BFC as 0 for simplicity
+    // In production, you could store daily closing balances in a separate table
+    return 0
   }
 
   const handlePrint = () => {
+    if (!cashbookData) return
+
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
@@ -162,83 +369,89 @@ export function DayCashbook() {
   }
 
   const generatePrintContent = () => {
+    if (!cashbookData) return ""
+
     const formatDate = (date: string) => {
       return new Date(date).toLocaleDateString('en-GB', {
         day: '2-digit',
-        month: 'short', 
+        month: 'short',
         year: 'numeric'
       })
     }
 
-    const totalDr = entries.reduce((sum, entry) => sum + (entry.dr_amount || 0), 0)
-    const totalCr = entries.reduce((sum, entry) => sum + (entry.cr_amount || 0), 0)
-    const cashInHand = totalDr - totalCr
-
-    const dateRange = startDate === endDate 
-      ? formatDate(startDate)
-      : `${formatDate(startDate)} --- ${formatDate(endDate)}`
+    const formatAmount = (amount: number) => amount.toFixed(2)
 
     return `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Day Cash Book</title>
+        <title>Day Cash Book - ${formatDate(cashbookData.date)}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          .header { text-center; margin-bottom: 30px; }
-          .company-name { font-size: 24px; font-weight: bold; margin-bottom: 8px; }
-          .address { font-size: 12px; margin-bottom: 8px; }
-          .period { font-size: 12px; margin-bottom: 20px; }
-          .title-oval { 
-            border: 2px solid black; 
-            border-radius: 50px; 
-            padding: 8px 30px; 
-            display: inline-block; 
-            font-size: 18px; 
+          body { 
+            font-family: Arial, sans-serif; 
+            margin: 15px; 
+            font-size: 12px;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 20px;
+          }
+          .company-name { 
+            font-size: 16px; 
             font-weight: bold; 
+            margin-bottom: 5px; 
+          }
+          .address { 
+            font-size: 10px; 
+            margin-bottom: 10px; 
+          }
+          .period {
+            font-size: 11px;
+            margin-bottom: 10px;
+          }
+          .title {
+            border: 2px solid black;
+            border-radius: 20px;
+            padding: 5px 20px;
+            display: inline-block;
+            font-size: 14px;
+            font-weight: bold;
           }
           .cashbook-table { 
             width: 100%; 
             border-collapse: collapse; 
-            border: 2px solid black; 
-            margin-bottom: 30px; 
+            margin: 20px 0;
+            border: 2px solid black;
           }
-          .cashbook-table th, .cashbook-table td { 
+          .cashbook-table th, 
+          .cashbook-table td { 
             border: 1px solid black; 
-            padding: 8px; 
+            padding: 6px; 
             text-align: left; 
+            font-size: 11px;
           }
           .cashbook-table th { 
             background-color: #f0f0f0; 
             font-weight: bold; 
             text-align: center;
           }
-          .amount-cell { text-align: right; }
+          .amount-cell { 
+            text-align: right; 
+            font-family: monospace;
+          }
           .total-row { 
             font-weight: bold; 
-            background-color: #f0f0f0; 
+            background-color: #f0f0f0;
+            border-top: 2px solid black;
           }
-          .cash-in-hand { 
-            text-align: center; 
-            margin: 30px 0; 
+          .cash-in-hand {
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+            margin-top: 20px;
           }
-          .cash-title { 
-            font-size: 20px; 
-            font-weight: bold; 
-            margin-bottom: 10px; 
-          }
-          .cash-amount { 
-            font-size: 36px; 
-            font-weight: bold; 
-            border-top: 2px solid black; 
-            padding-top: 10px; 
-            display: inline-block; 
-            min-width: 200px;
-          }
-          .footer { 
-            text-align: right; 
-            margin-top: 40px; 
-            font-size: 12px; 
+          @media print {
+            body { margin: 10px; }
           }
         </style>
       </head>
@@ -246,240 +459,299 @@ export function DayCashbook() {
         <div class="header">
           <div class="company-name">STAR POWER</div>
           <div class="address">
-            Shojiptorabagh,Fazlu/Section/Azad No-91, North Tower Uttara,Dhaka - 1230,Bangladesh:863/955.0
+            Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
           </div>
-          <div class="period">PERIOD : ${dateRange}</div>
-          <div class="title-oval">DAY CASH BOOK</div>
+          <div class="period">PERIOD : ${formatDate(cashbookData.date)}----${formatDate(cashbookData.date)}</div>
+          <div class="title">DAY CASH BOOK</div>
         </div>
 
         <table class="cashbook-table">
           <thead>
             <tr>
-              <th style="width: 60%;">Particulars</th>
-              <th style="width: 20%;">Dr.</th>
-              <th style="width: 20%;">Cr.</th>
+              <th style="width: 50%;">Particulars</th>
+              <th style="width: 25%;">Dr.</th>
+              <th style="width: 25%;">Cr.</th>
             </tr>
           </thead>
           <tbody>
-            ${entries.map(entry => `
+            ${(cashbookData.entries || []).map(entry => `
               <tr>
-                <td>${entry.particular}</td>
-                <td class="amount-cell">${entry.dr_amount > 0 ? entry.dr_amount.toFixed(2) : '0.00'}</td>
-                <td class="amount-cell">${entry.cr_amount > 0 ? entry.cr_amount.toFixed(2) : '0.00'}</td>
+                <td>${entry.particulars}</td>
+                <td class="amount-cell">${entry.debit > 0 ? formatAmount(entry.debit) : ''}</td>
+                <td class="amount-cell">${entry.credit > 0 ? formatAmount(entry.credit) : ''}</td>
               </tr>
             `).join('')}
             <tr class="total-row">
               <td></td>
-              <td class="amount-cell">${totalDr.toFixed(2)}</td>
-              <td class="amount-cell">${totalCr.toFixed(2)}</td>
+              <td class="amount-cell">${formatAmount(cashbookData.totalDebit || 0)}</td>
+              <td class="amount-cell">${formatAmount(cashbookData.totalCredit || 0)}</td>
             </tr>
           </tbody>
         </table>
 
         <div class="cash-in-hand">
-          <div class="cash-title">Cash In Hand  ৳${cashInHand.toFixed(2)}</div>
+          Cash In Hand &nbsp;&nbsp;&nbsp;&nbsp; ${formatAmount(cashbookData.cashInHand || 0)}
         </div>
-
       </body>
       </html>
     `
   }
 
-  const totalDr = entries.reduce((sum, entry) => sum + (entry.dr_amount || 0), 0)
-  const totalCr = entries.reduce((sum, entry) => sum + (entry.cr_amount || 0), 0)
+  const formatCurrency = (amount: number) => amount.toFixed(2)
+
+  // Edit functions
+  const startEditing = (index: number, entry: CashbookEntry) => {
+    setEditingEntry(index)
+    setEditEntry({
+      particulars: entry.particulars,
+      debit: entry.debit,
+      credit: entry.credit
+    })
+  }
+
+  const cancelEditing = () => {
+    setEditingEntry(null)
+    setEditEntry({ particulars: "", debit: 0, credit: 0 })
+  }
+
+  const saveEdit = async () => {
+    if (!cashbookData || editingEntry === null) return
+
+    const updatedEntries = [...cashbookData.entries]
+    updatedEntries[editingEntry] = {
+      particulars: editEntry.particulars,
+      debit: editEntry.debit,
+      credit: editEntry.credit
+    }
+
+    // Recalculate totals
+    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
+    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
+    const cashInHand = totalDebit - totalCredit
+
+    setCashbookData({
+      ...cashbookData,
+      entries: updatedEntries,
+      totalDebit,
+      totalCredit,
+      cashInHand
+    })
+
+    setEditingEntry(null)
+    setEditEntry({ particulars: "", debit: 0, credit: 0 })
+    
+    toast({
+      title: "Entry Updated",
+      description: "Cashbook entry has been updated successfully."
+    })
+  }
+
+  const deleteEntry = async (index: number) => {
+    if (!cashbookData || !confirm("Are you sure you want to delete this entry?")) return
+
+    const updatedEntries = cashbookData.entries.filter((_, i) => i !== index)
+    
+    // Recalculate totals
+    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
+    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
+    const cashInHand = totalDebit - totalCredit
+
+    setCashbookData({
+      ...cashbookData,
+      entries: updatedEntries,
+      totalDebit,
+      totalCredit,
+      cashInHand
+    })
+
+    toast({
+      title: "Entry Deleted",
+      description: "Cashbook entry has been deleted successfully."
+    })
+  }
+
+  const addNewEntry = async () => {
+    if (!cashbookData || !newEntry.particulars.trim()) {
+      toast({
+        title: "Invalid Entry",
+        description: "Please enter a description for the entry.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    const updatedEntries = [...cashbookData.entries, {
+      particulars: newEntry.particulars,
+      debit: newEntry.debit,
+      credit: newEntry.credit
+    }]
+
+    // Recalculate totals
+    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
+    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
+    const cashInHand = totalDebit - totalCredit
+
+    setCashbookData({
+      ...cashbookData,
+      entries: updatedEntries,
+      totalDebit,
+      totalCredit,
+      cashInHand
+    })
+
+    setNewEntry({ particulars: "", debit: 0, credit: 0 })
+    setShowAddEntry(false)
+    
+    toast({
+      title: "Entry Added",
+      description: "New cashbook entry has been added successfully."
+    })
+  }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
-      {/* Search Section */}
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Day Cash Book</h1>
+        <div className="flex items-center gap-2">
+          {!isAuthorized ? (
+            <div className="flex items-center text-amber-600 bg-amber-50 px-3 py-1 rounded-md">
+              <Lock className="h-4 w-4 mr-2" />
+              Read Only
+            </div>
+          ) : (
+            <Button 
+              variant="outline" 
+              onClick={() => setShowAddEntry(true)}
+              className="bg-green-50 hover:bg-green-100"
+            >
+              Add Entry
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => loadCashbookData(selectedDate)} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? "Refreshing..." : "Refresh"}
+          </Button>
+          <Button onClick={handlePrint} disabled={!cashbookData}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </Button>
+        </div>
+      </div>
+
+      {/* Date Selection */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            Day Cashbook Search
+            Select Date
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="flex items-center gap-4">
             <div>
-              <Label htmlFor="start-date">Start Date</Label>
+              <Label htmlFor="cashbook-date">Date</Label>
               <Input
-                id="start-date"
+                id="cashbook-date"
                 type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-48"
               />
             </div>
-            <div>
-              <Label htmlFor="end-date">End Date</Label>
-              <Input
-                id="end-date"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end gap-2">
-              <Button onClick={() => searchEntries()} disabled={loading}>
-                <Search className="h-4 w-4 mr-2" />
-                {loading ? "Searching..." : "Search"}
-              </Button>
-              <Button onClick={handlePrint} variant="outline">
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
+            <div className="text-sm text-muted-foreground">
+              Period: {new Date(selectedDate).toLocaleDateString('en-GB')}----{new Date(selectedDate).toLocaleDateString('en-GB')}
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Add Entry Section */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Plus className="h-5 w-5" />
-              Add Cashbook Entry
-            </CardTitle>
-            <Button onClick={() => setShowAddForm(!showAddForm)} variant="outline">
-              {showAddForm ? "Hide Form" : "Show Form"}
-            </Button>
-          </div>
-        </CardHeader>
-        {showAddForm && (
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div>
-                <Label htmlFor="entry-date">Date</Label>
-                <Input
-                  id="entry-date"
-                  type="date"
-                  value={newEntry.date}
-                  onChange={(e) => setNewEntry({...newEntry, date: e.target.value})}
-                />
+      {/* Error Display */}
+      {error && (
+        <Card className="border-red-200">
+          <CardContent className="p-4">
+            <div className="text-red-600 font-medium">Error: {error}</div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Loading State */}
+      {loading && (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+            <p className="text-muted-foreground">Loading cashbook data...</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Main Cashbook */}
+      {cashbookData && !loading && (
+        <Card>
+          <CardHeader className="text-center">
+            <div className="space-y-2">
+              <div className="text-xl font-bold">STAR POWER</div>
+              <div className="text-xs text-muted-foreground">
+                Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
               </div>
-              <div>
-                <Label htmlFor="particular">Particular</Label>
-                <Select 
-                  value={newEntry.particular} 
-                  onValueChange={(value) => setNewEntry({...newEntry, particular: value})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select particular" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {defaultParticulars.map(particular => (
-                      <SelectItem key={particular} value={particular}>
-                        {particular}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {newEntry.particular === "Custom" && (
-                <div>
-                  <Label htmlFor="custom-particular">Custom Particular</Label>
-                  <Input
-                    id="custom-particular"
-                    value={newEntry.customParticular}
-                    onChange={(e) => setNewEntry({...newEntry, customParticular: e.target.value})}
-                    placeholder="Enter custom particular"
-                  />
-                </div>
-              )}
-              <div>
-                <Label htmlFor="dr-amount">Dr. Amount</Label>
-                <Input
-                  id="dr-amount"
-                  type="number"
-                  step="0.01"
-                  value={newEntry.dr_amount}
-                  onChange={(e) => setNewEntry({...newEntry, dr_amount: Number(e.target.value) || 0})}
-                />
-              </div>
-              <div>
-                <Label htmlFor="cr-amount">Cr. Amount</Label>
-                <Input
-                  id="cr-amount"
-                  type="number"
-                  step="0.01"
-                  value={newEntry.cr_amount}
-                  onChange={(e) => setNewEntry({...newEntry, cr_amount: Number(e.target.value) || 0})}
-                />
+              <div className="text-sm">PERIOD : {new Date(cashbookData.date).toLocaleDateString('en-GB')}----{new Date(cashbookData.date).toLocaleDateString('en-GB')}</div>
+              <div className="inline-block border-2 border-black rounded-full px-6 py-1 font-bold">
+                DAY CASH BOOK
               </div>
             </div>
-            <div className="mt-4">
-              <Button onClick={addEntry} className="bg-green-600 hover:bg-green-700">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Entry
-              </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full border-2 border-black" style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="border border-black px-3 py-2 text-center font-bold" style={{ width: '50%' }}>
+                      Particulars
+                    </th>
+                    <th className="border border-black px-3 py-2 text-center font-bold" style={{ width: '25%' }}>
+                      Dr.
+                    </th>
+                    <th className="border border-black px-3 py-2 text-center font-bold" style={{ width: '25%' }}>
+                      Cr.
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cashbookData?.entries || []).map((entry, index) => (
+                    <tr key={index}>
+                      <td className="border border-black px-3 py-1 text-sm">
+                        {entry.particulars}
+                      </td>
+                      <td className="border border-black px-3 py-1 text-right text-sm font-mono">
+                        {entry.debit > 0 ? formatCurrency(entry.debit) : ''}
+                      </td>
+                      <td className="border border-black px-3 py-1 text-right text-sm font-mono">
+                        {entry.credit > 0 ? formatCurrency(entry.credit) : ''}
+                      </td>
+                    </tr>
+                  ))}
+                  
+                  {/* Total Row */}
+                  <tr className="bg-gray-100 font-bold border-t-2 border-black">
+                    <td className="border border-black px-3 py-2"></td>
+                    <td className="border border-black px-3 py-2 text-right font-mono">
+                      {formatCurrency(cashbookData?.totalDebit || 0)}
+                    </td>
+                    <td className="border border-black px-3 py-2 text-right font-mono">
+                      {formatCurrency(cashbookData?.totalCredit || 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Cash In Hand */}
+            <div className="text-center mt-8 text-xl font-bold">
+              Cash In Hand &nbsp;&nbsp;&nbsp;&nbsp; {formatCurrency(cashbookData?.cashInHand || 0)}
             </div>
           </CardContent>
-        )}
-      </Card>
-
-      {/* Entries Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Cashbook Entries</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {entries.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No entries found for the selected date range
-            </div>
-          ) : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Particulars</TableHead>
-                    <TableHead className="text-right">Dr. Amount</TableHead>
-                    <TableHead className="text-right">Cr. Amount</TableHead>
-                    <TableHead className="text-center">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell>{entry.date}</TableCell>
-                      <TableCell>{entry.particular}</TableCell>
-                      <TableCell className="text-right">
-                        {entry.dr_amount > 0 ? `৳${entry.dr_amount.toFixed(2)}` : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {entry.cr_amount > 0 ? `৳${entry.cr_amount.toFixed(2)}` : '-'}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Button
-                          onClick={() => deleteEntry(entry.id!)}
-                          variant="outline"
-                          size="sm"
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="font-bold bg-gray-50">
-                    <TableCell colSpan={2}>TOTAL</TableCell>
-                    <TableCell className="text-right">৳{totalDr.toFixed(2)}</TableCell>
-                    <TableCell className="text-right">৳{totalCr.toFixed(2)}</TableCell>
-                    <TableCell></TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-              
-              <div className="mt-6 text-center">
-                <div className="inline-block border-t-2 border-black pt-4">
-                  <div className="text-lg font-semibold">Cash In Hand   ৳{(totalDr - totalCr).toFixed(2)}</div>
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+        </Card>
+      )}
     </div>
   )
 }
