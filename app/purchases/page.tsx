@@ -17,7 +17,9 @@ import { createClient } from "@/utils/supabase/component"
 
 type PurchaseRow = {
   id: number
+  supplier_id: string | null
   supplier: string | null
+  suppliers: { name: string } | null
   product_name: string | null
   model_number: string | null
   category: string | null
@@ -81,12 +83,22 @@ export default function PurchasesPage() {
 
       while (true) {
         const { data, error } = await supabase
-          .from("purchases")
-          .select(
-            "id,supplier,product_name,model_number,category,brand,cost_price,created_at,color_variants(color)"
-          )
-          .order("created_at", { ascending: false })
-          .range(from, from + pageSize - 1)
+        .from("purchases")
+        .select(`
+          id,
+          supplier_id,
+          supplier,
+          suppliers(name),
+          product_name,
+          model_number,
+          category,
+          brand,
+          cost_price,
+          created_at,
+          color_variants(color)
+        `)
+        .order("created_at", { ascending: false })
+        .range(from, from + pageSize - 1)
 
         if (error) {
           if (mounted) setError(error.message)
@@ -116,7 +128,7 @@ export default function PurchasesPage() {
           model_number: p.model_number ?? null,
           category: p.category ?? null,
           brand: p.brand ?? null,
-          supplier: p.supplier ?? null,
+          supplier: p.suppliers?.name ?? p.supplier ?? null,
           cost_price: p.cost_price != null ? Number(p.cost_price) : null,
           created_at: p.created_at,
         }
