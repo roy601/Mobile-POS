@@ -164,15 +164,15 @@ export function DayCashbook() {
       ]
 
       // Add individual sales transactions
-      if (salesData.individualSales && salesData.individualSales.length > 0) {
-        salesData.individualSales.forEach((sale: any) => {
-          entries.push({
-            particulars: `Sale #${sale.id} - ${sale.customer_name || 'Walk-in Customer'}`,
-            debit: sale.total_amount || 0,
-            credit: 0
-          })
-        })
-      }
+      // if (salesData.individualSales && salesData.individualSales.length > 0) {
+      //   salesData.individualSales.forEach((sale: any) => {
+      //     entries.push({
+      //       particulars: `Sale #${sale.id} - ${sale.customer_name || 'Walk-in Customer'}`,
+      //       debit: sale.total_amount || 0,
+      //       credit: 0
+      //     })
+      //   })
+      // }
 
       // Add individual expense transactions
       if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
