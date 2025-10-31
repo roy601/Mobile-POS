@@ -270,13 +270,14 @@ export function SalesReturnForm() {
 
       // Create return item record
       const { error: returnItemError } = await supabase
-        .from("return_items")
+        .from("sales_return_items")
         .insert({
           return_id: returnRecord.id,
-          sold_product_id: selectedItem.id,
+          product_name: productName,
+          original_sold_product_id: selectedItem.id,
           quantity: quantity,
           unit_price: unitPrice,
-          total_amount: totalRefund,
+          total_refund_amount: totalRefund,
           condition: 'good'
         })
 

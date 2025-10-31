@@ -64,7 +64,7 @@ export function ReturnsClient() {
           sales_return_items (
             id,
             product_name,
-            return_quantity,
+            quantity,
             total_refund_amount
           )
         `)
