@@ -126,7 +126,7 @@ export function PurchaseReturnForm() {
     try {
       // First, find purchase items with this barcode
       const { data: items, error: itemsError } = await supabase
-        .from("inventory")
+        .from("color_variants")
         .select("*")
         .eq("barcode", barcodeValue)
 
