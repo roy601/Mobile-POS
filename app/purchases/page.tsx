@@ -26,7 +26,7 @@ type PurchaseRow = {
   brand: string | null
   cost_price: number | null
   created_at: string
-  color_variants?: { color: string | null, barcode: string}[] | null
+  color_variants?: { color: string | null, barcode: string | null }[] | null
 }
 
 type DisplayRow = {
@@ -131,16 +131,17 @@ export default function PurchasesPage() {
           brand: p.brand ?? null,
           supplier: p.suppliers?.name ?? p.supplier ?? null,
           cost_price: p.cost_price != null ? Number(p.cost_price) : null,
+          created_at: p.created_at,
         }
         const colors = p.color_variants ?? []
         if (colors.length === 0) {
-          return [{ key: `p-${p.id}-none`, ...base, color: null }]
+          return [{ key: `p-${p.id}-none`, ...base, color: null, barcode: "" }]
         }
         return colors.map((cv, idx) => ({
           key: `p-${p.id}-${idx}`,
           ...base,
           color: cv.color ?? null,
-          barcode: cv.barcode
+          barcode: cv.barcode ?? ""
         }))
       })
 
@@ -348,13 +349,13 @@ export default function PurchasesPage() {
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="p-6 text-sm text-muted-foreground">
+                          <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
                             Loading products…
                           </TableCell>
                         </TableRow>
                       ) : filtered.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="p-6 text-sm text-muted-foreground">
+                          <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
                             No products found.
                           </TableCell>
                         </TableRow>
