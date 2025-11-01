@@ -18,7 +18,8 @@ type CashbookEntry = {
 }
 
 type CashbookData = {
-  date: string
+  startDate: string
+  endDate: string
   entries: CashbookEntry[]
   totalDebit: number
   totalCredit: number
@@ -28,19 +29,13 @@ type CashbookData = {
 export function DayCashbook() {
   const { toast } = useToast()
   
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  )
+  const today = new Date().toISOString().split('T')[0]
+  const [startDate, setStartDate] = useState<string>(today)
+  const [endDate, setEndDate] = useState<string>(today)
   const [cashbookData, setCashbookData] = useState<CashbookData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isAuthorized, setIsAuthorized] = useState(false)
-  
-  // Edit states
-  const [editingEntry, setEditingEntry] = useState<number | null>(null)
-  const [showAddEntry, setShowAddEntry] = useState(false)
-  const [newEntry, setNewEntry] = useState({ particulars: "", debit: 0, credit: 0 })
-  const [editEntry, setEditEntry] = useState({ particulars: "", debit: 0, credit: 0 })
 
   // Check user authorization (only admin can edit)
   useEffect(() => {
@@ -52,9 +47,7 @@ export function DayCashbook() {
       const { data: userData, error } = await supabase.auth.getUser()
       if (error) throw error
       
-      // For now, assume authenticated users can edit
-      // In production, check for specific admin role
-      setIsAuthorized(!!userData?.user) // Set to true if user is logged in
+      setIsAuthorized(!!userData?.user)
     } catch (err) {
       console.error("Auth check error:", err)
       setIsAuthorized(false)
@@ -62,36 +55,39 @@ export function DayCashbook() {
   }
 
   useEffect(() => {
-    if (selectedDate) {
-      loadCashbookData(selectedDate)
+    if (startDate && endDate) {
+      // Validate date range
+      if (new Date(startDate) > new Date(endDate)) {
+        setError("Start date cannot be after end date")
+        return
+      }
+      loadCashbookData(startDate, endDate)
     }
-  }, [selectedDate])
+  }, [startDate, endDate])
 
-  const loadCashbookData = async (date: string) => {
+  const loadCashbookData = async (start: string, end: string) => {
     setLoading(true)
     setError(null)
     
     try {
-      // Get previous day's closing balance as BFC
-      const prevDate = new Date(date)
+      // Get BFC from the day before start date
+      const prevDate = new Date(start)
       prevDate.setDate(prevDate.getDate() - 1)
       const previousDate = prevDate.toISOString().split('T')[0]
       
-      // Initialize default data in case of errors
+      // Initialize default data
       let salesData: {
         totalSalesAmount: number
         cashAmount: number
         bankAmount: number
         duesAmount: number
-        individualSales: any[]
       } = { 
         totalSalesAmount: 0, 
         cashAmount: 0, 
         bankAmount: 0, 
-        duesAmount: 0, 
-        individualSales: [] 
+        duesAmount: 0
       }
-      let purchaseData = { totalAmount: 0 }
+      let purchaseData = { totalAmount: 0, numPurchases: 0 }
       let returnsData = { salesReturns: 0, purchaseReturns: 0 }
       let expensesData: {
         individualExpenses: any[]
@@ -102,19 +98,19 @@ export function DayCashbook() {
 
       try {
         const results = await Promise.all([
-          getSalesData(date).catch(err => {
+          getSalesData(start, end).catch(err => {
             console.warn('Sales data error:', err)
             return salesData
           }),
-          getPurchaseData(date).catch(err => {
+          getPurchaseData(start, end).catch(err => {
             console.warn('Purchase data error:', err)
             return purchaseData
           }),
-          getReturnsData(date).catch(err => {
+          getReturnsData(start, end).catch(err => {
             console.warn('Returns data error:', err)
             return returnsData
           }),
-          getExpensesData(date).catch(err => {
+          getExpensesData(start, end).catch(err => {
             console.warn('Expenses data error:', err)
             return expensesData
           }),
@@ -131,48 +127,90 @@ export function DayCashbook() {
         bfcAmount = results[4] || 0
       } catch (err) {
         console.error('Error loading data:', err)
-        // Continue with default values
       }
       
-      // Build entries array with fixed summary entries first
-      const entries: CashbookEntry[] = [
-        {
-          particulars: "BFC",
+      // Build entries array
+      const entries: CashbookEntry[] = []
+
+      // Add BFC entry
+      if (bfcAmount >= 0) {
+        // Positive balance = cash in hand = Debit
+        entries.push({
+          particulars: "BFC (Brought Forward Cash)",
           debit: bfcAmount,
           credit: 0
-        },
-        {
-          particulars: "Total Sales Amount",
-          debit: salesData.totalSalesAmount || 0,
-          credit: 0
-        },
-        {
+        })
+      } else {
+        // Negative balance = amount due = Credit
+        entries.push({
+          particulars: "BFC (Brought Forward Cash)",
+          debit: 0,
+          credit: Math.abs(bfcAmount)
+        })
+      }
+
+      // Total Sales Amount (all sales revenue)
+      entries.push({
+        particulars: "Total Sales Amount",
+        debit: salesData.totalSalesAmount || 0,
+        credit: 0
+      })
+
+      // Bank Cash entry - split between cash and bank
+      // If we received more in bank than cash, show the bank amount in Cr (cash in bank)
+      // If we received more in cash, show difference in Dr
+      const netBankCash = salesData.bankAmount - salesData.cashAmount
+      if (netBankCash > 0) {
+        // More bank receipts = we have cash in bank (Credit)
+        entries.push({
           particulars: "Bank Cash",
-          debit: salesData.cashAmount || 0,
-          credit: salesData.bankAmount || 0
-        },
-        {
+          debit: 0,
+          credit: netBankCash
+        })
+      } else if (netBankCash < 0) {
+        // More cash receipts = we have bank dues (Debit)
+        entries.push({
+          particulars: "Bank Cash",
+          debit: Math.abs(netBankCash),
+          credit: 0
+        })
+      }
+
+      // Sales Dues
+      if (salesData.duesAmount > 0) {
+        entries.push({
           particulars: "Sales Dues",
           debit: 0,
-          credit: salesData.duesAmount || 0
-        },
-        {
-          particulars: "Total Purchase Amount",
-          debit: 0,
-          credit: purchaseData.totalAmount || 0
-        }
-      ]
+          credit: salesData.duesAmount
+        })
+      }
 
-      // Add individual sales transactions
-      // if (salesData.individualSales && salesData.individualSales.length > 0) {
-      //   salesData.individualSales.forEach((sale: any) => {
-      //     entries.push({
-      //       particulars: `Sale #${sale.id} - ${sale.customer_name || 'Walk-in Customer'}`,
-      //       debit: sale.total_amount || 0,
-      //       credit: 0
-      //     })
-      //   })
-      // }
+      // Purchase Returns (money/credit coming back from suppliers)
+      if (returnsData.purchaseReturns > 0) {
+        entries.push({
+          particulars: "Purchase Returns (Credit from Suppliers)",
+          debit: returnsData.purchaseReturns,
+          credit: 0
+        })
+      }
+
+      // Total Purchase Amount
+      if (purchaseData.totalAmount > 0) {
+        entries.push({
+          particulars: `Total Purchase Amount (${purchaseData.numPurchases} units)`,
+          debit: 0,
+          credit: purchaseData.totalAmount
+        })
+      }
+
+      // Sales Returns (refunds paid to customers)
+      if (returnsData.salesReturns > 0) {
+        entries.push({
+          particulars: "Sales Returns (Refunds to Customers)",
+          debit: 0,
+          credit: returnsData.salesReturns
+        })
+      }
 
       // Add individual expense transactions
       if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
@@ -192,7 +230,8 @@ export function DayCashbook() {
       const cashInHand = totalDebit - totalCredit
 
       const data: CashbookData = {
-        date: date,
+        startDate: start,
+        endDate: end,
         entries: entries,
         totalDebit: totalDebit,
         totalCredit: totalCredit,
@@ -214,13 +253,25 @@ export function DayCashbook() {
     }
   }
 
-  const getSalesData = async (date: string) => {
+  const getSalesData = async (start: string, end: string) => {
     try {
       const { data, error } = await supabase
         .from("sales")
-        .select("id, total_amount, cash_received, card_received, bank_transfer_received, bkash_received, nagad_received, rocket_received, upay_received, due_amount, invoice_number")
-        .gte("created_at", date)
-        .lt("created_at", `${date}T23:59:59.999Z`)
+        .select(`
+          id, 
+          total_amount, 
+          cash_received, 
+          card_received, 
+          bank_transfer_received, 
+          bkash_received, 
+          nagad_received, 
+          rocket_received, 
+          upay_received, 
+          due_amount, 
+          invoice_number
+        `)
+        .gte("created_at", start)
+        .lte("created_at", `${end}T23:59:59.999Z`)
         .eq("status", "completed")
 
       if (error) {
@@ -246,70 +297,82 @@ export function DayCashbook() {
         }
       }, { totalSalesAmount: 0, cashAmount: 0, bankAmount: 0, duesAmount: 0 })
 
-      // Add individual sales for detailed entries (simplified)
-      const individualSales = sales.map(sale => ({
-        id: sale.invoice_number || sale.id,
-        total_amount: sale.total_amount || 0,
-        customer_name: `Customer #${sale.id}` // Simplified customer name
-      }))
-
-      return {
-        ...totals,
-        individualSales
-      }
+      return totals
     } catch (error) {
       console.error("getSalesData error:", error)
       return {
         totalSalesAmount: 0,
         cashAmount: 0,
         bankAmount: 0,
-        duesAmount: 0,
-        individualSales: []
+        duesAmount: 0
       }
     }
   }
 
-  const getPurchaseData = async (date: string) => {
+  const getPurchaseData = async (start: string, end: string) => {
     try {
       const { data, error } = await supabase
         .from("purchases")
-        .select("cost_price")
-        .gte("created_at", date)
-        .lt("created_at", `${date}T23:59:59.999Z`)
+        .select(`
+          id,
+          cost_price,
+          color_variants(purchase_id)
+        `)
+        .gte("created_at", start)
+        .lte("created_at", `${end}T23:59:59.999Z`)
 
       if (error) {
         console.error("Purchase data error:", error)
-        return { totalAmount: 0 }
+        return { totalAmount: 0, numPurchases: 0 }
       }
-
-      const totalAmount = (data || []).reduce((sum, purchase) => sum + (purchase.cost_price || 0), 0)
-      return { totalAmount }
+      
+      // Count total color_variants (products)
+      let numPurchases = data.flatMap(p => p.color_variants ?? []).length
+      
+      // Calculate total amount: cost_price × number of variants for each purchase
+      const totalAmount = data.reduce((sum, purchase) => {
+        const numVariants = purchase.color_variants?.length ?? 0
+        const costPrice = purchase.cost_price ?? 0
+        return sum + (costPrice * numVariants)
+      }, 0)
+      
+      return { totalAmount, numPurchases }
     } catch (error) {
       console.error("getPurchaseData error:", error)
-      return { totalAmount: 0 }
+      return { totalAmount: 0, numPurchases: 0 }
     }
   }
 
-  const getReturnsData = async (date: string) => {
+  const getReturnsData = async (start: string, end: string) => {
     try {
-      const [salesReturns, purchaseReturns] = await Promise.all([
+      const [salesReturnsResult, purchaseReturnsResult] = await Promise.all([
         supabase
           .from("sales_returns")
-          .select("total_refund")
-          .gte("return_date", date)
-          .lt("return_date", `${date}T23:59:59.999Z`)
+          .select("total_refund_amount")
+          .gte("return_date", start)
+          .lte("return_date", `${end}T23:59:59.999Z`)
+          .eq("status", "processed")
           .then(result => result.error ? { data: [] } : result),
         supabase
           .from("purchase_returns")
           .select("total_credit_amount")
-          .gte("return_date", date)
-          .lt("return_date", `${date}T23:59:59.999Z`)
+          .gte("return_date", start)
+          .lte("return_date", end)
+          .eq("status", "processed")
           .then(result => result.error ? { data: [] } : result)
       ])
 
+      const salesReturns = (salesReturnsResult.data || []).reduce(
+        (sum, ret) => sum + (ret.total_refund_amount || 0), 0
+      )
+      
+      const purchaseReturns = (purchaseReturnsResult.data || []).reduce(
+        (sum, ret) => sum + (ret.total_credit_amount || 0), 0
+      )
+
       return {
-        salesReturns: (salesReturns.data || []).reduce((sum, ret) => sum + (ret.total_refund || 0), 0),
-        purchaseReturns: (purchaseReturns.data || []).reduce((sum, ret) => sum + (ret.total_credit_amount || 0), 0)
+        salesReturns,
+        purchaseReturns
       }
     } catch (error) {
       console.error("getReturnsData error:", error)
@@ -317,13 +380,13 @@ export function DayCashbook() {
     }
   }
 
-  const getExpensesData = async (date: string) => {
+  const getExpensesData = async (start: string, end: string) => {
     try {
       const { data, error } = await supabase
         .from("expenses")
         .select("id, amount, category, custom_category, description, created_at")
-        .gte("date", date)
-        .lte("date", date)
+        .gte("date", start)
+        .lte("date", end)
         .order("created_at", { ascending: true })
 
       if (error) {
@@ -333,7 +396,6 @@ export function DayCashbook() {
 
       const expenses = data || []
 
-      // Return individual expenses for detailed entries
       const individualExpenses = expenses.map(expense => ({
         id: expense.id,
         amount: expense.amount || 0,
@@ -351,9 +413,32 @@ export function DayCashbook() {
   }
 
   const getPreviousBalance = async (date: string) => {
-    // Start BFC as 0 for simplicity
-    // In production, you could store daily closing balances in a separate table
-    return 0
+    try {
+      // Get all data up to and including the previous date
+      const [salesResult, purchaseResult, returnsResult, expensesResult] = await Promise.all([
+        getSalesData('2000-01-01', date),
+        getPurchaseData('2000-01-01', date),
+        getReturnsData('2000-01-01', date),
+        getExpensesData('2000-01-01', date)
+      ])
+
+      // Calculate total debits (money in)
+      const totalDebits = salesResult.totalSalesAmount + returnsResult.purchaseReturns
+
+      // Calculate total credits (money out)
+      const totalCredits = purchaseResult.totalAmount + 
+        returnsResult.salesReturns +
+        expensesResult.individualExpenses.reduce((sum, exp) => sum + exp.amount, 0) +
+        salesResult.duesAmount
+
+      // Cash in hand = Dr - Cr
+      const balance = totalDebits - totalCredits
+
+      return balance
+    } catch (error) {
+      console.error("getPreviousBalance error:", error)
+      return 0
+    }
   }
 
   const handlePrint = () => {
@@ -385,7 +470,7 @@ export function DayCashbook() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Day Cash Book - ${formatDate(cashbookData.date)}</title>
+        <title>Cash Book - ${formatDate(cashbookData.startDate)} to ${formatDate(cashbookData.endDate)}</title>
         <style>
           body { 
             font-family: Arial, sans-serif; 
@@ -461,8 +546,8 @@ export function DayCashbook() {
           <div class="address">
             Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
           </div>
-          <div class="period">PERIOD : ${formatDate(cashbookData.date)}----${formatDate(cashbookData.date)}</div>
-          <div class="title">DAY CASH BOOK</div>
+          <div class="period">PERIOD : ${formatDate(cashbookData.startDate)}----${formatDate(cashbookData.endDate)}</div>
+          <div class="title">CASH BOOK</div>
         </div>
 
         <table class="cashbook-table">
@@ -499,136 +584,19 @@ export function DayCashbook() {
 
   const formatCurrency = (amount: number) => amount.toFixed(2)
 
-  // Edit functions
-  const startEditing = (index: number, entry: CashbookEntry) => {
-    setEditingEntry(index)
-    setEditEntry({
-      particulars: entry.particulars,
-      debit: entry.debit,
-      credit: entry.credit
-    })
-  }
-
-  const cancelEditing = () => {
-    setEditingEntry(null)
-    setEditEntry({ particulars: "", debit: 0, credit: 0 })
-  }
-
-  const saveEdit = async () => {
-    if (!cashbookData || editingEntry === null) return
-
-    const updatedEntries = [...cashbookData.entries]
-    updatedEntries[editingEntry] = {
-      particulars: editEntry.particulars,
-      debit: editEntry.debit,
-      credit: editEntry.credit
-    }
-
-    // Recalculate totals
-    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
-    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
-    const cashInHand = totalDebit - totalCredit
-
-    setCashbookData({
-      ...cashbookData,
-      entries: updatedEntries,
-      totalDebit,
-      totalCredit,
-      cashInHand
-    })
-
-    setEditingEntry(null)
-    setEditEntry({ particulars: "", debit: 0, credit: 0 })
-    
-    toast({
-      title: "Entry Updated",
-      description: "Cashbook entry has been updated successfully."
-    })
-  }
-
-  const deleteEntry = async (index: number) => {
-    if (!cashbookData || !confirm("Are you sure you want to delete this entry?")) return
-
-    const updatedEntries = cashbookData.entries.filter((_, i) => i !== index)
-    
-    // Recalculate totals
-    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
-    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
-    const cashInHand = totalDebit - totalCredit
-
-    setCashbookData({
-      ...cashbookData,
-      entries: updatedEntries,
-      totalDebit,
-      totalCredit,
-      cashInHand
-    })
-
-    toast({
-      title: "Entry Deleted",
-      description: "Cashbook entry has been deleted successfully."
-    })
-  }
-
-  const addNewEntry = async () => {
-    if (!cashbookData || !newEntry.particulars.trim()) {
-      toast({
-        title: "Invalid Entry",
-        description: "Please enter a description for the entry.",
-        variant: "destructive"
-      })
-      return
-    }
-
-    const updatedEntries = [...cashbookData.entries, {
-      particulars: newEntry.particulars,
-      debit: newEntry.debit,
-      credit: newEntry.credit
-    }]
-
-    // Recalculate totals
-    const totalDebit = updatedEntries.reduce((sum, entry) => sum + entry.debit, 0)
-    const totalCredit = updatedEntries.reduce((sum, entry) => sum + entry.credit, 0)
-    const cashInHand = totalDebit - totalCredit
-
-    setCashbookData({
-      ...cashbookData,
-      entries: updatedEntries,
-      totalDebit,
-      totalCredit,
-      cashInHand
-    })
-
-    setNewEntry({ particulars: "", debit: 0, credit: 0 })
-    setShowAddEntry(false)
-    
-    toast({
-      title: "Entry Added",
-      description: "New cashbook entry has been added successfully."
-    })
-  }
-
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Day Cash Book</h1>
+        <h1 className="text-3xl font-bold">Cash Book</h1>
         <div className="flex items-center gap-2">
-          {!isAuthorized ? (
+          {!isAuthorized && (
             <div className="flex items-center text-amber-600 bg-amber-50 px-3 py-1 rounded-md">
               <Lock className="h-4 w-4 mr-2" />
               Read Only
             </div>
-          ) : (
-            <Button 
-              variant="outline" 
-              onClick={() => setShowAddEntry(true)}
-              className="bg-green-50 hover:bg-green-100"
-            >
-              Add Entry
-            </Button>
           )}
-          <Button variant="outline" onClick={() => loadCashbookData(selectedDate)} disabled={loading}>
+          <Button variant="outline" onClick={() => loadCashbookData(startDate, endDate)} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
@@ -639,28 +607,38 @@ export function DayCashbook() {
         </div>
       </div>
 
-      {/* Date Selection */}
+      {/* Date Range Selection */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            Select Date
+            Select Date Range
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
             <div>
-              <Label htmlFor="cashbook-date">Date</Label>
+              <Label htmlFor="start-date">From Date</Label>
               <Input
-                id="cashbook-date"
+                id="start-date"
                 type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
                 className="w-48"
               />
             </div>
-            <div className="text-sm text-muted-foreground">
-              Period: {new Date(selectedDate).toLocaleDateString('en-GB')}----{new Date(selectedDate).toLocaleDateString('en-GB')}
+            <div>
+              <Label htmlFor="end-date">To Date</Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-48"
+              />
+            </div>
+            <div className="text-sm text-muted-foreground mt-6">
+              Period: {new Date(startDate).toLocaleDateString('en-GB')} - {new Date(endDate).toLocaleDateString('en-GB')}
             </div>
           </div>
         </CardContent>
@@ -694,9 +672,11 @@ export function DayCashbook() {
               <div className="text-xs text-muted-foreground">
                 Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
               </div>
-              <div className="text-sm">PERIOD : {new Date(cashbookData.date).toLocaleDateString('en-GB')}----{new Date(cashbookData.date).toLocaleDateString('en-GB')}</div>
+              <div className="text-sm">
+                PERIOD : {new Date(cashbookData.startDate).toLocaleDateString('en-GB')}----{new Date(cashbookData.endDate).toLocaleDateString('en-GB')}
+              </div>
               <div className="inline-block border-2 border-black rounded-full px-6 py-1 font-bold">
-                DAY CASH BOOK
+                CASH BOOK
               </div>
             </div>
           </CardHeader>

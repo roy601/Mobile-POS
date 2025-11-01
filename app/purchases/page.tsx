@@ -26,11 +26,12 @@ type PurchaseRow = {
   brand: string | null
   cost_price: number | null
   created_at: string
-  color_variants?: { color: string | null }[] | null
+  color_variants?: { color: string | null, barcode: string}[] | null
 }
 
 type DisplayRow = {
   key: string
+  barcode: string
   product_name: string | null
   model_number: string | null
   category: string | null
@@ -95,7 +96,7 @@ export default function PurchasesPage() {
           brand,
           cost_price,
           created_at,
-          color_variants(color)
+          color_variants(color, barcode)
         `)
         .order("created_at", { ascending: false })
         .range(from, from + pageSize - 1)
@@ -130,7 +131,6 @@ export default function PurchasesPage() {
           brand: p.brand ?? null,
           supplier: p.suppliers?.name ?? p.supplier ?? null,
           cost_price: p.cost_price != null ? Number(p.cost_price) : null,
-          created_at: p.created_at,
         }
         const colors = p.color_variants ?? []
         if (colors.length === 0) {
@@ -140,6 +140,7 @@ export default function PurchasesPage() {
           key: `p-${p.id}-${idx}`,
           ...base,
           color: cv.color ?? null,
+          barcode: cv.barcode
         }))
       })
 
@@ -176,7 +177,7 @@ export default function PurchasesPage() {
       const catOk = categoryFilter === "all" || (r.category ?? "") === categoryFilter
       const brandOk = brandFilter === "all" || (r.brand ?? "") === brandFilter
       const supplierOk = supplierFilter === "all" || (r.supplier ?? "") === supplierFilter
-      const haystack = `${r.product_name ?? ""} ${r.model_number ?? ""} ${r.category ?? ""} ${r.brand ?? ""} ${r.color ?? ""} ${r.supplier ?? ""}`.toLowerCase()
+      const haystack =  `${r.barcode ?? ""} ${r.product_name ?? ""} ${r.model_number ?? ""} ${r.category ?? ""} ${r.brand ?? ""} ${r.color ?? ""} ${r.supplier ?? ""}`.toLowerCase()
       const qOk = !q || haystack.includes(q)
       return catOk && brandOk && supplierOk && qOk
     })
@@ -335,6 +336,7 @@ export default function PurchasesPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Product</TableHead>
+                        <TableHead>Barcode</TableHead>
                         <TableHead>Model</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Brand</TableHead>
@@ -360,6 +362,7 @@ export default function PurchasesPage() {
                         filtered.map((r) => (
                           <TableRow key={r.key}>
                             <TableCell className="font-medium">{r.product_name ?? "—"}</TableCell>
+                            <TableCell>{r.barcode ?? "—"}</TableCell>
                             <TableCell>{r.model_number ?? "—"}</TableCell>
                             <TableCell>{r.category ?? "—"}</TableCell>
                             <TableCell>{r.brand ?? "—"}</TableCell>
