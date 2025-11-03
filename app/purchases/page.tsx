@@ -150,7 +150,6 @@ export default function PurchasesPage() {
           ...base,
           color: cv.color ?? null,
           barcode: cv.barcode ?? ""
-          barcode: cv.barcode ?? ""
         }))
       })
 
