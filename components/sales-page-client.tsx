@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { CalendarDays, DollarSign, ShoppingCart, TrendingUp, Calendar, RefreshCw, Download } from "lucide-react"
+import { useEffect, useMemo, useState, Fragment } from "react"
+import { CalendarDays, DollarSign, ShoppingCart, TrendingUp, Calendar, RefreshCw, Download, ChevronDown, ChevronRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/utils/supabase/component"
 import { useToast } from "@/hooks/use-toast"
 import { MainNav } from "@/components/main-nav"
@@ -26,7 +27,24 @@ type SaleCustomerJoined = {
   customer_name: string | null
   customer_phone: string | null
   customer_email: string | null
-  customers: CustomerJoined[] | null // FIXED: Array as returned by Supabase
+  customers: CustomerJoined[] | null
+}
+
+// NEW: Product detail type
+type SoldProduct = {
+  id: number
+  barcode: string | null
+  product_name: string
+  model_number: string | null
+  color: string | null
+  quantity: number
+  unit_price: number
+  discount_percentage: number | null
+  discount_amount: number | null
+  total_price: number
+  cost_price: number | null
+  brand: string | null
+  category: string | null
 }
 
 type SaleRow = {
@@ -36,7 +54,7 @@ type SaleRow = {
   payment_method: string | null
   status: string | null
   sale_customers: SaleCustomerJoined[] | null
-  sold_products: { id: number }[] | null
+  sold_products: SoldProduct[] | null
 }
 
 type UiSale = {
@@ -48,6 +66,7 @@ type UiSale = {
   total: number
   payment: string | null
   status: string | null
+  products: SoldProduct[]
 }
 
 const supabase = createClient()
@@ -56,35 +75,33 @@ function bdAmount(n: number) {
   return `৳${n.toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-// FIXED: Better parsing with enhanced error handling and correct customer data handling
+// FIXED: Better parsing with product details
 function parseSupabaseRows(rows: SaleRow[]): UiSale[] {
   return rows.map((r) => {
     let created: Date
     try {
       created = new Date(r.created_at ?? Date.now())
     } catch {
-      created = new Date() // Fallback to current date
+      created = new Date()
     }
     
     const dateISO = created.toISOString().slice(0, 10)
     const timeLabel = created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
-    // FIXED: Handle both snapshot fields and nested customer array properly
     const sc = Array.isArray(r.sale_customers) && r.sale_customers.length > 0 ? r.sale_customers[0] : null
     let customerName: string | null = null
     
     if (sc) {
-      // Try snapshot fields first
       customerName = sc.customer_name || sc.customer_phone
       
-      // FIXED: Handle customers array correctly
       if (!customerName && Array.isArray(sc.customers) && sc.customers.length > 0) {
         const customer = sc.customers[0]
         customerName = customer.name || customer.phone_number
       }
     }
 
-    const itemsCount = Array.isArray(r.sold_products) ? r.sold_products.length : 0
+    const products = Array.isArray(r.sold_products) ? r.sold_products : []
+    const itemsCount = products.length
     const total = Number(r.total_amount ?? 0)
 
     return {
@@ -96,6 +113,7 @@ function parseSupabaseRows(rows: SaleRow[]): UiSale[] {
       total,
       payment: r.payment_method,
       status: r.status,
+      products
     }
   })
 }
@@ -107,19 +125,23 @@ export default function SalesPageClient() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [query, setQuery] = useState("")
+  const [brandFilter, setBrandFilter] = useState<string>("all")
+  const [categoryFilter, setCategoryFilter] = useState<string>("all")
 
   // data
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [uiSales, setUiSales] = useState<UiSale[]>([])
+  
+  // expanded rows
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
-  // FIXED: Better data loading with comprehensive error handling
+  // FIXED: Better data loading with product details
   async function loadSales() {
     setLoading(true)
     setError(null)
 
     try {
-      // FIXED: Better query structure with proper error handling
       const { data, error } = await supabase
         .from("sales")
         .select(`
@@ -137,7 +159,21 @@ export default function SalesPageClient() {
               id, name, phone_number, email
             )
           ),
-          sold_products ( id )
+          sold_products (
+            id,
+            barcode,
+            product_name,
+            model_number,
+            color,
+            quantity,
+            unit_price,
+            discount_percentage,
+            discount_amount,
+            total_price,
+            cost_price,
+            brand,
+            category
+          )
         `)
         .order("created_at", { ascending: false })
 
@@ -146,7 +182,6 @@ export default function SalesPageClient() {
         throw new Error(`Failed to fetch sales: ${error.message}`)
       }
 
-      // FIXED: Better data validation and parsing
       const rows = Array.isArray(data) ? data as SaleRow[] : []
       const parsedSales = parseSupabaseRows(rows)
       
@@ -182,7 +217,25 @@ export default function SalesPageClient() {
     }
   }, [])
 
-  // FIXED: Better client-side filtering with date validation
+  // Get unique brands and categories from all products
+  const { brands, categories } = useMemo(() => {
+    const brandSet = new Set<string>()
+    const categorySet = new Set<string>()
+    
+    uiSales.forEach(sale => {
+      sale.products.forEach(product => {
+        if (product.brand) brandSet.add(product.brand)
+        if (product.category) categorySet.add(product.category)
+      })
+    })
+    
+    return {
+      brands: ["All Brands", ...Array.from(brandSet).sort()],
+      categories: ["All Categories", ...Array.from(categorySet).sort()]
+    }
+  }, [uiSales])
+
+  // FIXED: Better client-side filtering with date validation and product filters
   const filteredSales = useMemo(() => {
     let start: Date | null = null
     let end: Date | null = null
@@ -201,52 +254,105 @@ export default function SalesPageClient() {
       try {
         saleDate = new Date(s.dateISO)
       } catch {
-        return false // Skip invalid dates
+        return false
       }
       
       const inStart = !start || saleDate >= start
       const inEnd = !end || saleDate <= end
       
-      const searchText = `${s.id} ${s.customer ?? ""} ${s.payment ?? ""} ${s.status ?? ""}`.toLowerCase()
-      const matchQ = !q || searchText.includes(q)
+      // Brand and category filters - check if ANY product matches
+      const brandOk = brandFilter === "all" || s.products.some(p => p.brand === brandFilter)
+      const categoryOk = categoryFilter === "all" || s.products.some(p => p.category === categoryFilter)
       
-      return inStart && inEnd && matchQ
+      // Search across sale and product fields
+      const saleSearchText = `${s.id} ${s.customer ?? ""} ${s.payment ?? ""} ${s.status ?? ""}`.toLowerCase()
+      const productSearchText = s.products.map(p => 
+        `${p.barcode ?? ""} ${p.product_name} ${p.model_number ?? ""} ${p.color ?? ""} ${p.brand ?? ""} ${p.category ?? ""}`
+      ).join(" ").toLowerCase()
+      
+      const matchQ = !q || saleSearchText.includes(q) || productSearchText.includes(q)
+      
+      return inStart && inEnd && brandOk && categoryOk && matchQ
     })
-  }, [uiSales, startDate, endDate, query])
+  }, [uiSales, startDate, endDate, query, brandFilter, categoryFilter])
 
   // FIXED: Better KPI calculations with error handling
   const totalSales = filteredSales.length
   const totalRevenue = filteredSales.reduce((sum, s) => sum + (Number.isFinite(s.total) ? s.total : 0), 0)
   const todayISO = new Date().toISOString().slice(0, 10)
   const todaySales = filteredSales.filter((s) => s.dateISO === todayISO).length
-  const completedSales = filteredSales.filter((s) => s.status === "completed")
-  const completedCount = completedSales.length
-  const completedRevenue = completedSales.reduce((sum, s) => sum + s.total, 0)
-  const avgSaleValue = completedCount > 0 ? completedRevenue / completedCount : 0
+  
+  // Calculate total profit from filtered sales
+  const totalProfit = useMemo(() => {
+    return filteredSales.reduce((sum, sale) => {
+      const saleProfit = sale.products.reduce((productSum, product) => {
+        const costPrice = Number(product.cost_price) || 0
+        const unitPrice = Number(product.unit_price) || 0
+        const quantity = Number(product.quantity) || 0
+        const profit = (unitPrice - costPrice) * quantity
+        return productSum + profit
+      }, 0)
+      return sum + saleProfit
+    }, 0)
+  }, [filteredSales])
 
   const clearFilters = () => {
     setStartDate("")
     setEndDate("")
     setQuery("")
+    setBrandFilter("all")
+    setCategoryFilter("all")
   }
 
-  // FIXED: Implement CSV export functionality
+  const toggleRow = (saleId: string) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      if (next.has(saleId)) {
+        next.delete(saleId)
+      } else {
+        next.add(saleId)
+      }
+      return next
+    })
+  }
+
+  // FIXED: Implement CSV export functionality with product details and profit
   const handleExportCSV = () => {
     try {
-      const rows = filteredSales.map(s => 
-        [
-          s.id,
-          s.dateISO,
-          s.timeLabel,
-          `"${s.customer || ''}"`, // Quote to handle commas
-          s.itemsCount,
-          `"${s.payment || ''}"`,
-          `"${s.status || ''}"`,
-          s.total.toFixed(2)
-        ].join(',')
-      )
+      const rows: string[] = []
+      
+      filteredSales.forEach(s => {
+        s.products.forEach((p, idx) => {
+          const costPrice = Number(p.cost_price) || 0
+          const unitPrice = Number(p.unit_price) || 0
+          const quantity = Number(p.quantity) || 0
+          const profit = (unitPrice - costPrice) * quantity
+          
+          rows.push([
+            s.id,
+            s.dateISO,
+            s.timeLabel,
+            `"${s.customer || ''}"`,
+            `"${p.product_name}"`,
+            `"${p.model_number || ''}"`,
+            `"${p.color || ''}"`,
+            `"${p.barcode || ''}"`,
+            `"${p.brand || ''}"`,
+            `"${p.category || ''}"`,
+            p.quantity,
+            p.unit_price.toFixed(2),
+            costPrice.toFixed(2),
+            p.total_price.toFixed(2),
+            profit.toFixed(2),
+            `"${s.payment || ''}"`,
+            `"${s.status || ''}"`,
+            idx === 0 ? s.total.toFixed(2) : '' // Only show sale total on first product
+          ].join(','))
+        })
+      })
+      
       const csv = [
-        'ID,Date,Time,Customer,Items,Payment Method,Status,Total',
+        'Sale ID,Date,Time,Customer,Product Name,Model,Color,Barcode,Brand,Category,Qty,Unit Price,Cost Price,Line Total,Line Profit,Payment Method,Status,Sale Total',
         ...rows
       ].join('\n')
       
@@ -262,7 +368,7 @@ export default function SalesPageClient() {
       
       toast({
         title: "Export successful",
-        description: `Exported ${filteredSales.length} sales records`
+        description: `Exported ${filteredSales.length} sales with product details and profit`
       })
     } catch (error) {
       toast({
@@ -307,7 +413,6 @@ export default function SalesPageClient() {
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
-        
         <h2 className="text-3xl font-bold tracking-tight">Sales</h2>
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={loadSales} disabled={loading}>
@@ -337,58 +442,100 @@ export default function SalesPageClient() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-4 w-4" />
-            Filter by Date Range
+            Filter Sales
           </CardTitle>
-          <CardDescription>Select date range or search to filter sales transactions</CardDescription>
+          <CardDescription>Filter by date range, brand, category, or search</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <Label htmlFor="start-date">Start Date</Label>
-              <Input
-                id="start-date"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="end-date">End Date</Label>
-              <Input
-                id="end-date"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="mt-1"
-              />
+          <div className="flex flex-col gap-4">
+            {/* Date Range */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <div className="flex-1">
+                <Label htmlFor="start-date">Start Date</Label>
+                <Input
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex-1">
+                <Label htmlFor="end-date">End Date</Label>
+                <Input
+                  id="end-date"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+
+              <div className="flex-1">
+                <Label htmlFor="search">Search</Label>
+                <Input
+                  id="search"
+                  placeholder="Invoice, customer, product…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
             </div>
 
-            <div className="flex-1">
-              <Label htmlFor="search">Search</Label>
-              <Input
-                id="search"
-                placeholder="Invoice, customer, method…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="mt-1"
-              />
-            </div>
+            {/* Brand and Category Filters */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <div className="flex-1">
+                <Label htmlFor="brand-filter">Brand</Label>
+                <Select value={brandFilter} onValueChange={setBrandFilter}>
+                  <SelectTrigger id="brand-filter" className="mt-1">
+                    <SelectValue placeholder="All Brands" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Brands</SelectItem>
+                    {brands
+                      .filter(b => b !== "All Brands")
+                      .map(b => (
+                        <SelectItem key={b} value={b}>{b}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={clearFilters}>
-                Clear Filters
-              </Button>
+              <div className="flex-1">
+                <Label htmlFor="category-filter">Category</Label>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger id="category-filter" className="mt-1">
+                    <SelectValue placeholder="All Categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {categories
+                      .filter(c => c !== "All Categories")
+                      .map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={clearFilters}>
+                  Clear Filters
+                </Button>
+              </div>
             </div>
           </div>
 
-          {(startDate || endDate || query) && (
+          {(startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all") && (
             <div className="mt-3 text-sm text-muted-foreground">
               Showing {filteredSales.length} of {uiSales.length} transactions
               {startDate && endDate && ` from ${startDate} to ${endDate}`}
               {startDate && !endDate && ` from ${startDate} onwards`}
               {!startDate && endDate && ` up to ${endDate}`}
-              {query && ` matching "${query}"`}
+              {brandFilter !== "all" && ` • Brand: ${brandFilter}`}
+              {categoryFilter !== "all" && ` • Category: ${categoryFilter}`}
+              {query && ` • matching "${query}"`}
             </div>
           )}
         </CardContent>
@@ -404,7 +551,7 @@ export default function SalesPageClient() {
           <CardContent>
             <div className="text-2xl font-bold">{totalSales}</div>
             <p className="text-xs text-muted-foreground">
-              {startDate || endDate || query ? "Filtered transactions" : "All time transactions"}
+              {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" ? "Filtered transactions" : "All time transactions"}
             </p>
           </CardContent>
         </Card>
@@ -433,14 +580,18 @@ export default function SalesPageClient() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg. Sale Value</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {bdAmount(Math.round(avgSaleValue))}
+              {bdAmount(totalProfit)}
             </div>
-            <p className="text-xs text-muted-foreground">Per completed transaction</p>
+            <p className="text-xs text-muted-foreground">
+              {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" 
+                ? "From filtered sales" 
+                : "All time profit (revenue - cost)"}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -452,9 +603,9 @@ export default function SalesPageClient() {
           <CardDescription>
             {error 
               ? `Error: ${error}`
-              : startDate || endDate || query
-                ? `Filtered sales transactions (${filteredSales.length} results)`
-                : "Complete list of all sales transactions"
+              : startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all"
+                ? `Filtered sales transactions (${filteredSales.length} results) - Click rows to see product details`
+                : "Complete list of all sales transactions - Click rows to see product details"
             }
           </CardDescription>
         </CardHeader>
@@ -471,59 +622,128 @@ export default function SalesPageClient() {
             </div>
           )}
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice / ID</TableHead>
-                <TableHead>Date & Time</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Payment Method</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredSales.length === 0 ? (
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={7} className="p-6 text-sm text-muted-foreground">
-                    {error ? "Failed to load sales data." : "No sales found for the selected filters."}
-                  </TableCell>
+                  <TableHead className="w-[40px]"></TableHead>
+                  <TableHead>Invoice / ID</TableHead>
+                  <TableHead>Date & Time</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead>Payment Method</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                 </TableRow>
-              ) : (
-                filteredSales.map((sale, idx) => (
-                  <TableRow key={`${sale.id}-${idx}`}>
-                    <TableCell className="font-medium">{sale.id}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="text-sm">{sale.dateISO}</span>
-                        <span className="text-xs text-muted-foreground">{sale.timeLabel}</span>
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {filteredSales.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
+                      {error ? "Failed to load sales data." : "No sales found for the selected filters."}
                     </TableCell>
-                    <TableCell>{sale.customer ?? "—"}</TableCell>
-                    <TableCell>{sale.itemsCount} item{sale.itemsCount === 1 ? "" : "s"}</TableCell>
-                    <TableCell>{sale.payment ?? "—"}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          sale.status === "completed"
-                            ? "outline"
-                            : sale.status === "refunded"
-                            ? "destructive"
-                            : sale.status === "pending"
-                            ? "secondary"
-                            : "secondary"
-                        }
-                      >
-                        {sale.status ?? "—"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">{bdAmount(sale.total)}</TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  filteredSales.map((sale, idx) => (
+                    <Fragment key={`sale-${sale.id}-${idx}`}>
+                      <TableRow 
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => toggleRow(sale.id)}
+                      >
+                        <TableCell>
+                          {expandedRows.has(sale.id) ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{sale.id}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-sm">{sale.dateISO}</span>
+                            <span className="text-xs text-muted-foreground">{sale.timeLabel}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>{sale.customer ?? "—"}</TableCell>
+                        <TableCell>{sale.itemsCount} item{sale.itemsCount === 1 ? "" : "s"}</TableCell>
+                        <TableCell>{sale.payment ?? "—"}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              sale.status === "completed"
+                                ? "outline"
+                                : sale.status === "refunded"
+                                ? "destructive"
+                                : sale.status === "pending"
+                                ? "secondary"
+                                : "secondary"
+                            }
+                          >
+                            {sale.status ?? "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-medium">{bdAmount(sale.total)}</TableCell>
+                      </TableRow>
+                      
+                      {/* Expanded Product Details */}
+                      {expandedRows.has(sale.id) && (
+                        <TableRow>
+                          <TableCell colSpan={8} className="bg-muted/30 p-0">
+                            <div className="p-4">
+                              <h4 className="text-sm font-semibold mb-3">Products in this sale:</h4>
+                              <div className="rounded-md border bg-background">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Product Name</TableHead>
+                                      <TableHead>Barcode</TableHead>
+                                      <TableHead>Model</TableHead>
+                                      <TableHead>Color</TableHead>
+                                      <TableHead>Brand</TableHead>
+                                      <TableHead>Category</TableHead>
+                                      <TableHead className="text-center">Qty</TableHead>
+                                      <TableHead className="text-right">Unit Price</TableHead>
+                                      <TableHead className="text-right">Cost Price</TableHead>
+                                      <TableHead className="text-right">Total</TableHead>
+                                      <TableHead className="text-right">Profit</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {sale.products.map((product) => {
+                                      const costPrice = Number(product.cost_price) || 0
+                                      const unitPrice = Number(product.unit_price) || 0
+                                      const quantity = Number(product.quantity) || 0
+                                      const profit = (unitPrice - costPrice) * quantity
+                                      
+                                      return (
+                                        <TableRow key={product.id}>
+                                          <TableCell className="font-medium">{product.product_name}</TableCell>
+                                          <TableCell>{product.barcode ?? "—"}</TableCell>
+                                          <TableCell>{product.model_number ?? "—"}</TableCell>
+                                          <TableCell>{product.color ?? "—"}</TableCell>
+                                          <TableCell>{product.brand ?? "—"}</TableCell>
+                                          <TableCell>{product.category ?? "—"}</TableCell>
+                                          <TableCell className="text-center">{product.quantity}</TableCell>
+                                          <TableCell className="text-right">{bdAmount(product.unit_price)}</TableCell>
+                                          <TableCell className="text-right">{bdAmount(costPrice)}</TableCell>
+                                          <TableCell className="text-right font-medium">{bdAmount(product.total_price)}</TableCell>
+                                          <TableCell className="text-right font-bold text-green-600">{bdAmount(profit)}</TableCell>
+                                        </TableRow>
+                                      )
+                                    })}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -32,7 +32,7 @@ type Product = {
   brand: string | null
   supplier: string | null
   salePrice: number
-  costPrice: number | null
+  costPrice: number
   quantity: number
   color: string | null
 }
@@ -227,7 +227,7 @@ export function InventoryClient() {
 
   // FIXED: Safe calculations
   const totalValue = useMemo(
-    () => products.reduce((sum, p) => sum + (p.salePrice || 0) * (p.quantity || 0), 0),
+    () => products.reduce((sum, p) => sum + (p.costPrice || 0) * (p.quantity || 0), 0),
     [products]
   )
 
@@ -288,10 +288,10 @@ export function InventoryClient() {
   // FIXED: Handle loading state
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="sflex-1 space-y-4 p-8 pt-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Inventory Management</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Inventory Management</h1>
             <p className="text-muted-foreground">Loading inventory data...</p>
           </div>
         </div>
@@ -453,7 +453,8 @@ export function InventoryClient() {
                 <TableHead>Category</TableHead>
                 <TableHead>Brand</TableHead>
                 <TableHead>Color</TableHead>
-                <TableHead>Price</TableHead>
+                <TableHead>Cost Price</TableHead>
+                <TableHead>Sale Price</TableHead>
                 <TableHead>Qty (Grouped)</TableHead>
                 <TableHead>Supplier</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -476,6 +477,7 @@ export function InventoryClient() {
                       <TableCell>{p.category ?? "Uncategorized"}</TableCell>
                       <TableCell>{p.brand ?? "—"}</TableCell>
                       <TableCell>{p.color ?? "—"}</TableCell>
+                      <TableCell>৳{p.costPrice.toLocaleString()}</TableCell>
                       <TableCell>৳{p.salePrice.toLocaleString()}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">

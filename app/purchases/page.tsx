@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Search, Plus, ShoppingBag, Calendar, Building2 } from "lucide-react"
+import { Search, Plus, ShoppingBag, Calendar, Building2, DollarSign, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,6 +26,7 @@ type PurchaseRow = {
   brand: string | null
   cost_price: number | null
   created_at: string
+  color_variants?: { color: string | null, barcode: string | null }[] | null
   color_variants?: { color: string | null, barcode: string | null }[] | null
 }
 
@@ -59,10 +60,15 @@ export default function PurchasesPage() {
   const [rows, setRows] = useState<DisplayRow[]>([])
   const [purchases, setPurchases] = useState<{ id: number; supplier: string | null; created_at: string }[]>([])
 
+  // Search and filters
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [brandFilter, setBrandFilter] = useState<string>("all")
   const [supplierFilter, setSupplierFilter] = useState<string>("all")
+  
+  // Date range filters
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
 
   // open add-product via header button or ?tab=add-product
   useEffect(() => {
@@ -132,15 +138,18 @@ export default function PurchasesPage() {
           supplier: p.suppliers?.name ?? p.supplier ?? null,
           cost_price: p.cost_price != null ? Number(p.cost_price) : null,
           created_at: p.created_at,
+          created_at: p.created_at,
         }
         const colors = p.color_variants ?? []
         if (colors.length === 0) {
+          return [{ key: `p-${p.id}-none`, ...base, color: null, barcode: "" }]
           return [{ key: `p-${p.id}-none`, ...base, color: null, barcode: "" }]
         }
         return colors.map((cv, idx) => ({
           key: `p-${p.id}-${idx}`,
           ...base,
           color: cv.color ?? null,
+          barcode: cv.barcode ?? ""
           barcode: cv.barcode ?? ""
         }))
       })
@@ -171,21 +180,58 @@ export default function PurchasesPage() {
     return ["All Suppliers", ...Array.from(s).sort()]
   }, [rows])
 
-  // apply filters + search
+  // apply filters + search + date range
   const filtered = useMemo(() => {
+    let start: Date | null = null
+    let end: Date | null = null
+    
+    try {
+      if (startDate) start = new Date(startDate)
+      if (endDate) end = new Date(endDate)
+    } catch {
+      // Invalid dates - ignore filters
+    }
+    
     const q = query.trim().toLowerCase()
+    
     return rows.filter((r) => {
+      // Date filtering
+      let purchaseDate: Date
+      try {
+        purchaseDate = new Date(r.created_at)
+      } catch {
+        return false // Skip invalid dates
+      }
+      
+      const inStart = !start || purchaseDate >= start
+      const inEnd = !end || purchaseDate <= end
+      
+      // Category, brand, supplier filters
       const catOk = categoryFilter === "all" || (r.category ?? "") === categoryFilter
       const brandOk = brandFilter === "all" || (r.brand ?? "") === brandFilter
       const supplierOk = supplierFilter === "all" || (r.supplier ?? "") === supplierFilter
-      const haystack =  `${r.barcode ?? ""} ${r.product_name ?? ""} ${r.model_number ?? ""} ${r.category ?? ""} ${r.brand ?? ""} ${r.color ?? ""} ${r.supplier ?? ""}`.toLowerCase()
+      
+      // Search query
+      const haystack = `${r.barcode ?? ""} ${r.product_name ?? ""} ${r.model_number ?? ""} ${r.category ?? ""} ${r.brand ?? ""} ${r.color ?? ""} ${r.supplier ?? ""}`.toLowerCase()
       const qOk = !q || haystack.includes(q)
-      return catOk && brandOk && supplierOk && qOk
+      
+      return inStart && inEnd && catOk && brandOk && supplierOk && qOk
     })
-  }, [rows, query, categoryFilter, brandFilter, supplierFilter])
+  }, [rows, query, categoryFilter, brandFilter, supplierFilter, startDate, endDate])
 
   // summary cards
-  const totalPurchases = purchases.length
+  
+  const totalPurchases = useMemo(() => {
+    // Get unique purchase IDs from filtered rows
+    const uniquePurchaseIds = new Set(filtered.map(r => r.key.split('-')))
+    return uniquePurchaseIds.size
+  }, [filtered])
+
+  // Total purchase value from filtered rows
+  const totalPurchaseValue = useMemo(() => {
+    return filtered.reduce((sum, r) => sum + (Number.isFinite(r.cost_price) ? r.cost_price! : 0), 0)
+  }, [filtered])
+  
   const thisMonthPurchases = useMemo(() => {
     const now = new Date()
     const y = now.getFullYear()
@@ -200,6 +246,17 @@ export default function PurchasesPage() {
     const s = new Set(purchases.map((p) => (p.supplier ?? "").trim()).filter(Boolean))
     return s.size
   }, [purchases])
+
+  const clearFilters = () => {
+    setStartDate("")
+    setEndDate("")
+    setQuery("")
+    setCategoryFilter("all")
+    setBrandFilter("all")
+    setSupplierFilter("all")
+  }
+
+  const hasActiveFilters = startDate || endDate || query || categoryFilter !== "all" || brandFilter !== "all" || supplierFilter !== "all"
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -223,7 +280,7 @@ export default function PurchasesPage() {
         </div>
 
         {/* summary cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Purchases</CardTitle>
@@ -237,12 +294,12 @@ export default function PurchasesPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">This Month</CardTitle>
-              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Total Purchase Value</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{loading ? "—" : thisMonthPurchases}</div>
-              <p className="text-xs text-muted-foreground">Purchases recorded</p>
+              <div className="text-2xl font-bold">{loading ? "—" : formatBDT(totalPurchaseValue)}</div>
+              <p className="text-xs text-muted-foreground">{filtered.length} items filtered</p>
             </CardContent>
           </Card>
 
@@ -266,65 +323,101 @@ export default function PurchasesPage() {
 
           {/* Purchases table with Supplier + Cost Price */}
           <TabsContent value="purchases" className="space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col gap-4">
+              {/* Date Range Filters */}
               <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">From:</label>
                   <Input
-                    placeholder="Search products, brand, category, supplier…"
-                    className="pl-8 w-[220px] lg:w-[320px]"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-[160px]"
                   />
                 </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">To:</label>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-[160px]"
+                  />
+                </div>
+                {hasActiveFilters && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="ml-2"
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    Clear Filters
+                  </Button>
+                )}
+              </div>
 
-                <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v)}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {categories
-                      .filter((c) => c !== "All Categories")
-                      .map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+              {/* Search and Filter Controls */}
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search products, brand, category, supplier…"
+                      className="pl-8 w-[220px] lg:w-[320px]"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  </div>
 
-                <Select value={brandFilter} onValueChange={(v) => setBrandFilter(v)}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Brand" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Brands</SelectItem>
-                    {brands
-                      .filter((b) => b !== "All Brands")
-                      .map((b) => (
-                        <SelectItem key={b} value={b}>
-                          {b}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                  <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Categories</SelectItem>
+                      {categories
+                        .filter((c) => c !== "All Categories")
+                        .map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
 
-                <Select value={supplierFilter} onValueChange={(v) => setSupplierFilter(v)}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Suppliers</SelectItem>
-                    {suppliers
-                      .filter((s) => s !== "All Suppliers")
-                      .map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                  <Select value={brandFilter} onValueChange={(v) => setBrandFilter(v)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Brand" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Brands</SelectItem>
+                      {brands
+                        .filter((b) => b !== "All Brands")
+                        .map((b) => (
+                          <SelectItem key={b} value={b}>
+                            {b}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={supplierFilter} onValueChange={(v) => setSupplierFilter(v)}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Suppliers</SelectItem>
+                      {suppliers
+                        .filter((s) => s !== "All Suppliers")
+                        .map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {s}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
@@ -336,26 +429,26 @@ export default function PurchasesPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Barcode</TableHead>
-                        <TableHead>Model</TableHead>
-                        <TableHead>Category</TableHead>
                         <TableHead>Brand</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Model</TableHead>
                         <TableHead>Color</TableHead>
+                        <TableHead>Barcode</TableHead>
                         <TableHead>Supplier</TableHead>
                         <TableHead>Cost Price</TableHead>
+                        <TableHead>Date</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
+                          <TableCell colSpan={9} className="p-6 text-sm text-muted-foreground">
                             Loading products…
                           </TableCell>
                         </TableRow>
                       ) : filtered.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
+                          <TableCell colSpan={9} className="p-6 text-sm text-muted-foreground">
                             No products found.
                           </TableCell>
                         </TableRow>
@@ -363,13 +456,13 @@ export default function PurchasesPage() {
                         filtered.map((r) => (
                           <TableRow key={r.key}>
                             <TableCell className="font-medium">{r.product_name ?? "—"}</TableCell>
-                            <TableCell>{r.barcode ?? "—"}</TableCell>
-                            <TableCell>{r.model_number ?? "—"}</TableCell>
                             <TableCell>{r.category ?? "—"}</TableCell>
-                            <TableCell>{r.brand ?? "—"}</TableCell>
+                            <TableCell>{r.model_number ?? "—"}</TableCell>
                             <TableCell>{r.color ?? "—"}</TableCell>
+                            <TableCell>{r.barcode ?? "—"}</TableCell>
                             <TableCell>{r.supplier ?? "—"}</TableCell>
                             <TableCell>{formatBDT(r.cost_price)}</TableCell>
+                            <TableCell>{new Date(r.created_at).toLocaleDateString("en-GB")}</TableCell>
                           </TableRow>
                         ))
                       )}
