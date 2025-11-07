@@ -159,7 +159,7 @@ export function DayCashbook() {
       // Bank Cash entry - split between cash and bank
       // If we received more in bank than cash, show the bank amount in Cr (cash in bank)
       // If we received more in cash, show difference in Dr
-      const netBankCash = salesData.bankAmount - salesData.cashAmount
+      const netBankCash = salesData.bankAmount
       if (netBankCash > 0) {
         // More bank receipts = we have cash in bank (Credit)
         entries.push({
@@ -195,13 +195,6 @@ export function DayCashbook() {
       }
 
       // Total Purchase Amount
-      if (purchaseData.totalAmount > 0) {
-        entries.push({
-          particulars: `Total Purchase Amount (${purchaseData.numPurchases} units)`,
-          debit: 0,
-          credit: purchaseData.totalAmount
-        })
-      }
 
       // Sales Returns (refunds paid to customers)
       if (returnsData.salesReturns > 0) {

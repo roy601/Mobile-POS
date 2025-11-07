@@ -51,6 +51,7 @@ type SaleRow = {
   id: string | number
   created_at: string
   total_amount: number | null
+  total_discount: number | null
   payment_method: string | null
   status: string | null
   sale_customers: SaleCustomerJoined[] | null
@@ -64,6 +65,7 @@ type UiSale = {
   customer: string | null
   itemsCount: number
   total: number
+  totalDiscount: number
   payment: string | null
   status: string | null
   products: SoldProduct[]
@@ -75,7 +77,7 @@ function bdAmount(n: number) {
   return `৳${n.toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-// FIXED: Better parsing with product details
+// FIXED: Better parsing with product details and total_discount
 function parseSupabaseRows(rows: SaleRow[]): UiSale[] {
   return rows.map((r) => {
     let created: Date
@@ -103,6 +105,7 @@ function parseSupabaseRows(rows: SaleRow[]): UiSale[] {
     const products = Array.isArray(r.sold_products) ? r.sold_products : []
     const itemsCount = products.length
     const total = Number(r.total_amount ?? 0)
+    const totalDiscount = Number(r.total_discount ?? 0)
 
     return {
       id: String(r.id),
@@ -111,6 +114,7 @@ function parseSupabaseRows(rows: SaleRow[]): UiSale[] {
       customer: customerName,
       itemsCount,
       total,
+      totalDiscount,
       payment: r.payment_method,
       status: r.status,
       products
@@ -136,7 +140,7 @@ export default function SalesPageClient() {
   // expanded rows
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
-  // FIXED: Better data loading with product details
+  // FIXED: Better data loading with product details and total_discount
   async function loadSales() {
     setLoading(true)
     setError(null)
@@ -148,6 +152,7 @@ export default function SalesPageClient() {
           id,
           created_at,
           total_amount,
+          total_discount,
           payment_method,
           status,
           sale_customers (
@@ -276,22 +281,25 @@ export default function SalesPageClient() {
     })
   }, [uiSales, startDate, endDate, query, brandFilter, categoryFilter])
 
-  // FIXED: Better KPI calculations with error handling
+  // FIXED: Better KPI calculations with error handling and total_discount
   const totalSales = filteredSales.length
   const totalRevenue = filteredSales.reduce((sum, s) => sum + (Number.isFinite(s.total) ? s.total : 0), 0)
   const todayISO = new Date().toISOString().slice(0, 10)
   const todaySales = filteredSales.filter((s) => s.dateISO === todayISO).length
   
-  // Calculate total profit from filtered sales
+  // UPDATED: Calculate total profit using total_discount from sales table
   const totalProfit = useMemo(() => {
     return filteredSales.reduce((sum, sale) => {
-      const saleProfit = sale.products.reduce((productSum, product) => {
+      // Calculate total cost for all products in the sale
+      const totalCost = sale.products.reduce((costSum, product) => {
         const costPrice = Number(product.cost_price) || 0
-        const unitPrice = Number(product.unit_price) || 0
         const quantity = Number(product.quantity) || 0
-        const profit = (unitPrice - costPrice) * quantity
-        return productSum + profit
+        return costSum + (costPrice * quantity)
       }, 0)
+      
+      // Profit = Revenue - Total Cost - Total Discount
+      const saleProfit = sale.total - totalCost
+      
       return sum + saleProfit
     }, 0)
   }, [filteredSales])
@@ -316,17 +324,35 @@ export default function SalesPageClient() {
     })
   }
 
-  // FIXED: Implement CSV export functionality with product details and profit
+  // UPDATED: CSV export with sale-level total_discount for profit calculation
   const handleExportCSV = () => {
     try {
       const rows: string[] = []
       
       filteredSales.forEach(s => {
+        // Calculate total cost for the sale
+        const totalCost = s.products.reduce((sum, p) => {
+          const costPrice = Number(p.cost_price) || 0
+          const quantity = Number(p.quantity) || 0
+          return sum + (costPrice * quantity)
+        }, 0)
+        
+        // Sale-level profit
+        const saleProfit = s.total - s.totalDiscount
+        
         s.products.forEach((p, idx) => {
           const costPrice = Number(p.cost_price) || 0
-          const unitPrice = Number(p.unit_price) || 0
           const quantity = Number(p.quantity) || 0
-          const profit = (unitPrice - costPrice) * quantity
+          const lineCost = costPrice * quantity
+          
+          // Proportionally distribute the total discount across products based on their total_price
+          const totalProductValue = s.products.reduce((sum, prod) => sum + Number(prod.total_price), 0)
+          const proportionalDiscount = totalProductValue > 0 
+            ? (Number(p.total_price) / totalProductValue) * s.totalDiscount 
+            : 0
+          
+          // Line profit with proportional discount
+          const lineProfit = p.total_price - lineCost - proportionalDiscount
           
           rows.push([
             s.id,
@@ -343,16 +369,19 @@ export default function SalesPageClient() {
             p.unit_price.toFixed(2),
             costPrice.toFixed(2),
             p.total_price.toFixed(2),
-            profit.toFixed(2),
+            proportionalDiscount.toFixed(2),
+            lineProfit.toFixed(2),
             `"${s.payment || ''}"`,
-            `"${s.status || ''}"`,
-            idx === 0 ? s.total.toFixed(2) : '' // Only show sale total on first product
+            `"${s.status || ''}"`,,
+            idx === 0 ? s.total.toFixed(2) : '', // Sale total on first product
+            idx === 0 ? s.totalDiscount.toFixed(2) : '', // Total discount on first product
+            idx === 0 ? saleProfit.toFixed(2) : '' // Sale profit on first product
           ].join(','))
         })
       })
       
       const csv = [
-        'Sale ID,Date,Time,Customer,Product Name,Model,Color,Barcode,Brand,Category,Qty,Unit Price,Cost Price,Line Total,Line Profit,Payment Method,Status,Sale Total',
+        'Sale ID,Date,Time,Customer,Product Name,Model,Color,Barcode,Brand,Category,Qty,Unit Price,Cost Price,Line Total,Line Discount,Line Profit,Payment Method,Status,Sale Total,Sale Discount,Sale Profit',
         ...rows
       ].join('\n')
       
@@ -589,8 +618,8 @@ export default function SalesPageClient() {
             </div>
             <p className="text-xs text-muted-foreground">
               {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" 
-                ? "From filtered sales" 
-                : "All time profit (revenue - cost)"}
+                ? "Revenue - Cost - Total Discount" 
+                : "All time profit (revenue - cost - discount)"}
             </p>
           </CardContent>
         </Card>
@@ -634,112 +663,132 @@ export default function SalesPageClient() {
                   <TableHead>Payment Method</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Discount</TableHead>
+                  <TableHead className="text-right">Profit</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredSales.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="p-6 text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="p-6 text-sm text-muted-foreground">
                       {error ? "Failed to load sales data." : "No sales found for the selected filters."}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredSales.map((sale, idx) => (
-                    <Fragment key={`sale-${sale.id}-${idx}`}>
-                      <TableRow 
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => toggleRow(sale.id)}
-                      >
-                        <TableCell>
-                          {expandedRows.has(sale.id) ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </TableCell>
-                        <TableCell className="font-medium">{sale.id}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="text-sm">{sale.dateISO}</span>
-                            <span className="text-xs text-muted-foreground">{sale.timeLabel}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>{sale.customer ?? "—"}</TableCell>
-                        <TableCell>{sale.itemsCount} item{sale.itemsCount === 1 ? "" : "s"}</TableCell>
-                        <TableCell>{sale.payment ?? "—"}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              sale.status === "completed"
-                                ? "outline"
-                                : sale.status === "refunded"
-                                ? "destructive"
-                                : sale.status === "pending"
-                                ? "secondary"
-                                : "secondary"
-                            }
-                          >
-                            {sale.status ?? "—"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">{bdAmount(sale.total)}</TableCell>
-                      </TableRow>
-                      
-                      {/* Expanded Product Details */}
-                      {expandedRows.has(sale.id) && (
-                        <TableRow>
-                          <TableCell colSpan={8} className="bg-muted/30 p-0">
-                            <div className="p-4">
-                              <h4 className="text-sm font-semibold mb-3">Products in this sale:</h4>
-                              <div className="rounded-md border bg-background">
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>Product Name</TableHead>
-                                      <TableHead>Barcode</TableHead>
-                                      <TableHead>Model</TableHead>
-                                      <TableHead>Color</TableHead>
-                                      <TableHead>Brand</TableHead>
-                                      <TableHead>Category</TableHead>
-                                      <TableHead className="text-center">Qty</TableHead>
-                                      <TableHead className="text-right">Unit Price</TableHead>
-                                      <TableHead className="text-right">Cost Price</TableHead>
-                                      <TableHead className="text-right">Total</TableHead>
-                                      <TableHead className="text-right">Profit</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {sale.products.map((product) => {
-                                      const costPrice = Number(product.cost_price) || 0
-                                      const unitPrice = Number(product.unit_price) || 0
-                                      const quantity = Number(product.quantity) || 0
-                                      const profit = (unitPrice - costPrice) * quantity
-                                      
-                                      return (
-                                        <TableRow key={product.id}>
-                                          <TableCell className="font-medium">{product.product_name}</TableCell>
-                                          <TableCell>{product.barcode ?? "—"}</TableCell>
-                                          <TableCell>{product.model_number ?? "—"}</TableCell>
-                                          <TableCell>{product.color ?? "—"}</TableCell>
-                                          <TableCell>{product.brand ?? "—"}</TableCell>
-                                          <TableCell>{product.category ?? "—"}</TableCell>
-                                          <TableCell className="text-center">{product.quantity}</TableCell>
-                                          <TableCell className="text-right">{bdAmount(product.unit_price)}</TableCell>
-                                          <TableCell className="text-right">{bdAmount(costPrice)}</TableCell>
-                                          <TableCell className="text-right font-medium">{bdAmount(product.total_price)}</TableCell>
-                                          <TableCell className="text-right font-bold text-green-600">{bdAmount(profit)}</TableCell>
-                                        </TableRow>
-                                      )
-                                    })}
-                                  </TableBody>
-                                </Table>
-                              </div>
+                  filteredSales.map((sale, idx) => {
+                    // Calculate sale profit
+                    const totalCost = sale.products.reduce((sum, p) => {
+                      const costPrice = Number(p.cost_price) || 0
+                      const quantity = Number(p.quantity) || 0
+                      return sum + (costPrice * quantity)
+                    }, 0)
+                    const saleProfit = sale.total - totalCost
+                    
+                    return (
+                      <Fragment key={`sale-${sale.id}-${idx}`}>
+                        <TableRow 
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => toggleRow(sale.id)}
+                        >
+                          <TableCell>
+                            {expandedRows.has(sale.id) ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </TableCell>
+                          <TableCell className="font-medium">{sale.id}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="text-sm">{sale.dateISO}</span>
+                              <span className="text-xs text-muted-foreground">{sale.timeLabel}</span>
                             </div>
                           </TableCell>
+                          <TableCell>{sale.customer ?? "—"}</TableCell>
+                          <TableCell>{sale.itemsCount} item{sale.itemsCount === 1 ? "" : "s"}</TableCell>
+                          <TableCell>{sale.payment ?? "—"}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                sale.status === "completed"
+                                  ? "outline"
+                                  : sale.status === "refunded"
+                                  ? "destructive"
+                                  : sale.status === "pending"
+                                  ? "secondary"
+                                  : "secondary"
+                              }
+                            >
+                              {sale.status ?? "—"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right font-medium">{bdAmount(sale.total)}</TableCell>
+                          <TableCell className="text-right text-red-600">{bdAmount(sale.totalDiscount)}</TableCell>
+                          <TableCell className="text-right font-bold text-green-600">{bdAmount(saleProfit)}</TableCell>
                         </TableRow>
-                      )}
-                    </Fragment>
-                  ))
+                        
+                        {/* Expanded Product Details */}
+                        {expandedRows.has(sale.id) && (
+                          <TableRow>
+                            <TableCell colSpan={10} className="bg-muted/30 p-0">
+                              <div className="p-4">
+                                <div className="mb-3 flex items-center justify-between">
+                                  <h4 className="text-sm font-semibold">Products in this sale:</h4>
+                                  <div className="text-sm text-muted-foreground">
+                                    Sale Discount: <span className="font-semibold text-red-600">{bdAmount(sale.totalDiscount)}</span>
+                                    {" • "}
+                                    Sale Profit: <span className="font-semibold text-green-600">{bdAmount(saleProfit)}</span>
+                                  </div>
+                                </div>
+                                <div className="rounded-md border bg-background">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Product Name</TableHead>
+                                        <TableHead>Barcode</TableHead>
+                                        <TableHead>Model</TableHead>
+                                        <TableHead>Color</TableHead>
+                                        <TableHead>Brand</TableHead>
+                                        <TableHead>Category</TableHead>
+                                        <TableHead className="text-center">Qty</TableHead>
+                                        <TableHead className="text-right">Unit Price</TableHead>
+                                        <TableHead className="text-right">Cost Price</TableHead>
+                                        <TableHead className="text-right">Line Total</TableHead>
+                                        <TableHead className="text-right">Line Cost</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {sale.products.map((product) => {
+                                        const costPrice = Number(product.cost_price) || 0
+                                        const quantity = Number(product.quantity) || 0
+                                        const lineCost = costPrice * quantity
+                                        
+                                        return (
+                                          <TableRow key={product.id}>
+                                            <TableCell className="font-medium">{product.product_name}</TableCell>
+                                            <TableCell>{product.barcode ?? "—"}</TableCell>
+                                            <TableCell>{product.model_number ?? "—"}</TableCell>
+                                            <TableCell>{product.color ?? "—"}</TableCell>
+                                            <TableCell>{product.brand ?? "—"}</TableCell>
+                                            <TableCell>{product.category ?? "—"}</TableCell>
+                                            <TableCell className="text-center">{product.quantity}</TableCell>
+                                            <TableCell className="text-right">{bdAmount(product.unit_price)}</TableCell>
+                                            <TableCell className="text-right">{bdAmount(costPrice)}</TableCell>
+                                            <TableCell className="text-right font-medium">{bdAmount(product.total_price)}</TableCell>
+                                            <TableCell className="text-right text-muted-foreground">{bdAmount(lineCost)}</TableCell>
+                                          </TableRow>
+                                        )
+                                      })}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    )
+                  })
                 )}
               </TableBody>
             </Table>

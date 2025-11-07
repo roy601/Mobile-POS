@@ -31,6 +31,7 @@ type ExpenseEntry = {
 
 // Updated categories to match your simplified database schema
 const expenseCategories = [
+  { value: "party_payment", label: "Party Payment" },
   { value: "salaries", label: "Salaries" },
   { value: "printer_papers", label: "Printer Papers" },
   { value: "water_bill", label: "Water Bill" },
