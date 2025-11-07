@@ -281,13 +281,16 @@ export default function SalesPageClient() {
     })
   }, [uiSales, startDate, endDate, query, brandFilter, categoryFilter])
 
-  // FIXED: Better KPI calculations with error handling and total_discount
-  const totalSales = filteredSales.length
+  // UPDATED: Calculate total items sold (sum of quantities) instead of transaction count
+  const totalTransactions = filteredSales.length
+  const totalItemsSold = filteredSales.reduce((sum, s) => {
+    return sum + s.products.reduce((itemSum, p) => itemSum + Number(p.quantity || 0), 0)
+  }, 0)
   const totalRevenue = filteredSales.reduce((sum, s) => sum + (Number.isFinite(s.total) ? s.total : 0), 0)
   const todayISO = new Date().toISOString().slice(0, 10)
   const todaySales = filteredSales.filter((s) => s.dateISO === todayISO).length
   
-  // UPDATED: Calculate total profit using total_discount from sales table
+  // UPDATED: Calculate total profit using revenue - cost formula
   const totalProfit = useMemo(() => {
     return filteredSales.reduce((sum, sale) => {
       // Calculate total cost for all products in the sale
@@ -297,7 +300,7 @@ export default function SalesPageClient() {
         return costSum + (costPrice * quantity)
       }, 0)
       
-      // Profit = Revenue - Total Cost - Total Discount
+      // Profit = Revenue - Total Cost
       const saleProfit = sale.total - totalCost
       
       return sum + saleProfit
@@ -338,7 +341,7 @@ export default function SalesPageClient() {
         }, 0)
         
         // Sale-level profit
-        const saleProfit = s.total - s.totalDiscount
+        const saleProfit = s.total - totalCost
         
         s.products.forEach((p, idx) => {
           const costPrice = Number(p.cost_price) || 0
@@ -372,7 +375,7 @@ export default function SalesPageClient() {
             proportionalDiscount.toFixed(2),
             lineProfit.toFixed(2),
             `"${s.payment || ''}"`,
-            `"${s.status || ''}"`,,
+            `"${s.status || ''}"`,
             idx === 0 ? s.total.toFixed(2) : '', // Sale total on first product
             idx === 0 ? s.totalDiscount.toFixed(2) : '', // Total discount on first product
             idx === 0 ? saleProfit.toFixed(2) : '' // Sale profit on first product
@@ -574,13 +577,15 @@ export default function SalesPageClient() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Items Sold</CardTitle>
             <ShoppingCart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalSales}</div>
+            <div className="text-2xl font-bold">{totalItemsSold.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" ? "Filtered transactions" : "All time transactions"}
+              {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" 
+                ? `From ${totalTransactions} transactions` 
+                : `From ${totalTransactions} all time transactions`}
             </p>
           </CardContent>
         </Card>
@@ -618,8 +623,8 @@ export default function SalesPageClient() {
             </div>
             <p className="text-xs text-muted-foreground">
               {startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all" 
-                ? "Revenue - Cost - Total Discount" 
-                : "All time profit (revenue - cost - discount)"}
+                ? "Revenue - Cost" 
+                : "All time profit (revenue - cost)"}
             </p>
           </CardContent>
         </Card>
