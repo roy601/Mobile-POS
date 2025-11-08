@@ -94,6 +94,11 @@ export function DayCashbook() {
       } = {
         individualExpenses: []
       }
+      let incomeData: {
+        individualIncomes: any[]
+      } = {
+        individualIncomes: []
+      }
       let bfcAmount = 0
 
       try {
@@ -114,6 +119,10 @@ export function DayCashbook() {
             console.warn('Expenses data error:', err)
             return expensesData
           }),
+          getIncomeData(start, end).catch(err => {
+            console.warn('Income data error:', err)
+            return incomeData
+          }),
           getPreviousBalance(previousDate).catch(err => {
             console.warn('Previous balance error:', err)
             return 0
@@ -124,7 +133,8 @@ export function DayCashbook() {
         purchaseData = results[1] || purchaseData
         returnsData = results[2] || returnsData
         expensesData = results[3] || expensesData
-        bfcAmount = results[4] || 0
+        incomeData = results[4] || incomeData
+        bfcAmount = results[5] || 0
       } catch (err) {
         console.error('Error loading data:', err)
       }
@@ -194,7 +204,20 @@ export function DayCashbook() {
         })
       }
 
-      // Total Purchase Amount
+      // Add individual income transactions (as Debit - money coming in)
+      if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
+        incomeData.individualIncomes.forEach((income: any) => {
+          const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'
+          const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
+          const description = income.description ? ` - ${income.description}` : ''
+          
+          entries.push({
+            particulars: `${incomeTypeLabel} (${destinationLabel})${description}`,
+            debit: income.amount || 0,
+            credit: 0
+          })
+        })
+      }
 
       // Sales Returns (refunds paid to customers)
       if (returnsData.salesReturns > 0) {
@@ -405,18 +428,54 @@ export function DayCashbook() {
     }
   }
 
+  const getIncomeData = async (start: string, end: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("income_owner")
+        .select("id, amount, income_type, destination_type, description, created_at")
+        .gte("date", start)
+        .lte("date", end)
+        .order("created_at", { ascending: true })
+
+      if (error) {
+        console.error("Income data error:", error)
+        return { individualIncomes: [] }
+      }
+
+      const incomes = data || []
+
+      const individualIncomes = incomes.map(income => ({
+        id: income.id,
+        amount: income.amount || 0,
+        income_type: income.income_type || 'owner_income',
+        destination_type: income.destination_type || 'cash',
+        description: income.description || '',
+        created_at: income.created_at
+      }))
+
+      return { individualIncomes }
+    } catch (error) {
+      console.error("getIncomeData error:", error)
+      return { individualIncomes: [] }
+    }
+  }
+
   const getPreviousBalance = async (date: string) => {
     try {
       // Get all data up to and including the previous date
-      const [salesResult, purchaseResult, returnsResult, expensesResult] = await Promise.all([
+      const [salesResult, purchaseResult, returnsResult, expensesResult, incomeResult] = await Promise.all([
         getSalesData('2000-01-01', date),
         getPurchaseData('2000-01-01', date),
         getReturnsData('2000-01-01', date),
-        getExpensesData('2000-01-01', date)
+        getExpensesData('2000-01-01', date),
+        getIncomeData('2000-01-01', date)
       ])
 
+      // Calculate total income amount
+      const totalIncome = incomeResult.individualIncomes.reduce((sum, income) => sum + income.amount, 0)
+
       // Calculate total debits (money in)
-      const totalDebits = salesResult.totalSalesAmount + returnsResult.purchaseReturns
+      const totalDebits = salesResult.totalSalesAmount + returnsResult.purchaseReturns + totalIncome
 
       // Calculate total credits (money out)
       const totalCredits = purchaseResult.totalAmount + 
