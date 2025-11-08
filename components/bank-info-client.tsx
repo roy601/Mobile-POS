@@ -343,7 +343,7 @@ export function BankInfoClient() {
                   <TableHead>Method</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>IMEI</TableHead>
+                  <TableHead>Voucher</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
