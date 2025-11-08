@@ -1,25 +1,15 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Building, CreditCard, DollarSign, Filter, Search } from "lucide-react"
+import { Building, CreditCard, DollarSign, Filter } from "lucide-react"
 import { createClient } from "@/utils/supabase/component"
 
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { useRole } from "@/components/role-provider"
 
 type BankAccount = {
@@ -52,8 +42,6 @@ type Transaction = {
 export function BankInfoClient() {
   const supabase = createClient()
   const { hasPermission } = useRole()
-  const [showAddTransaction, setShowAddTransaction] = useState(false)
-  const [searchTerm, setSearchTerm] = useState("")
   const [filterBankName, setFilterBankName] = useState("all")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
@@ -92,7 +80,7 @@ export function BankInfoClient() {
               id: `TXN-BKASH-${sale.id}`,
               date,
               time,
-              bankName: 'BRAC Bank Limited - Star Power',
+              bankName: 'BRAC Bank Limited',
               method: 'bKash',
               amount: sale.bkash_received,
               description: `Sale payment via bKash - Invoice ${sale.invoice_number}`,
@@ -108,7 +96,7 @@ export function BankInfoClient() {
               id: `TXN-NAGAD-${sale.id}`,
               date,
               time,
-              bankName: 'BRAC Bank Limited - Star Power',
+              bankName: 'BRAC Bank Limited',
               method: 'Nagad',
               amount: sale.nagad_received,
               description: `Sale payment via Nagad - Invoice ${sale.invoice_number}`,
@@ -196,11 +184,6 @@ export function BankInfoClient() {
   }, [supabase])
 
   const filteredTransactions = transactions.filter((transaction) => {
-    const matchesSearch =
-      transaction.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transaction.imei.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transaction.method.toLowerCase().includes(searchTerm.toLowerCase())
-
     const matchesBankName = filterBankName === "all" || transaction.bankName === filterBankName
 
     // Date range filter
@@ -215,8 +198,11 @@ export function BankInfoClient() {
       }
     }
 
-    return matchesSearch && matchesBankName && matchesDateRange
+    return matchesBankName && matchesDateRange
   })
+
+  // Calculate total amount from filtered transactions
+  const totalAmount = filteredTransactions.reduce((sum, transaction) => sum + transaction.amount, 0)
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -241,11 +227,6 @@ export function BankInfoClient() {
     }
   }
 
-  const handleAddTransaction = () => {
-    setShowAddTransaction(false)
-    alert("Transaction added successfully!")
-  }
-
   // Get unique bank names for filter
   const uniqueBankNames = Array.from(new Set(transactions.map(t => t.bankName))).sort()
 
@@ -258,12 +239,6 @@ export function BankInfoClient() {
             Track all non-cash transactions from completed sales
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => setShowAddTransaction(true)} className="bg-green-600 hover:bg-green-700">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Transaction
-          </Button>
-        </div>
       </div>
 
       <div className="space-y-4">
@@ -275,20 +250,7 @@ export function BankInfoClient() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <Label htmlFor="search-transactions">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="search-transactions"
-                    placeholder="Search transactions..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <Label htmlFor="filter-bank-name">Bank Name</Label>
                 <Select value={filterBankName} onValueChange={setFilterBankName}>
@@ -329,6 +291,27 @@ export function BankInfoClient() {
 
         <Card>
           <CardHeader>
+            <CardTitle>Summary</CardTitle>
+            <CardDescription>
+              Total amount for selected filters
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Total Bank Deposits</p>
+                <p className="text-3xl font-bold text-green-600">৳{totalAmount.toLocaleString()}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-muted-foreground">Total Transactions</p>
+                <p className="text-2xl font-semibold">{filteredTransactions.length}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>Non-Cash Transactions</CardTitle>
             <CardDescription>
               All card, mobile banking, and bank transfer transactions from completed sales
@@ -343,7 +326,7 @@ export function BankInfoClient() {
                   <TableHead>Method</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>Voucher</TableHead>
+                  <TableHead>IMEI</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -388,80 +371,6 @@ export function BankInfoClient() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Add Transaction Dialog */}
-      <Dialog open={showAddTransaction} onOpenChange={setShowAddTransaction}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Add Manual Transaction</DialogTitle>
-            <DialogDescription>Record a non-cash transaction manually</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="transaction-date">Date*</Label>
-                <Input id="transaction-date" type="date" />
-              </div>
-              <div>
-                <Label htmlFor="transaction-time">Time*</Label>
-                <Input id="transaction-time" type="time" />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="transaction-bank-name">Bank Name*</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select bank" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="BRAC Bank Limited">BRAC Bank Limited</SelectItem>
-                  <SelectItem value="Dutch-Bangla Bank Limited">Dutch-Bangla Bank Limited</SelectItem>
-                  <SelectItem value="UCB Bank">UCB Bank</SelectItem>
-                  <SelectItem value="City Bank Limited">City Bank Limited</SelectItem>
-                  <SelectItem value="Islami Bank Bangladesh Limited">Islami Bank Bangladesh Limited</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="transaction-method">Payment Method*</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select method" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bKash">bKash</SelectItem>
-                  <SelectItem value="Nagad">Nagad</SelectItem>
-                  <SelectItem value="Rocket">Rocket</SelectItem>
-                  <SelectItem value="Upay">Upay</SelectItem>
-                  <SelectItem value="Visa Card">Visa Card</SelectItem>
-                  <SelectItem value="MasterCard">MasterCard</SelectItem>
-                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="transaction-amount">Amount*</Label>
-              <Input id="transaction-amount" type="number" placeholder="0.00" />
-            </div>
-            <div>
-              <Label htmlFor="transaction-description">Description*</Label>
-              <Textarea id="transaction-description" placeholder="Enter transaction description" />
-            </div>
-            <div>
-              <Label htmlFor="transaction-imei">IMEI/Sale ID*</Label>
-              <Input id="transaction-imei" placeholder="Enter IMEI or sale ID" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddTransaction(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddTransaction} className="bg-green-600 hover:bg-green-700">
-              Add Transaction
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
