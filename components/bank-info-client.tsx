@@ -80,7 +80,7 @@ export function BankInfoClient() {
               id: `TXN-BKASH-${sale.id}`,
               date,
               time,
-              bankName: 'BRAC Bank Limited',
+              bankName: 'BRAC Bank Limited - Star Power',
               method: 'bKash',
               amount: sale.bkash_received,
               description: `Sale payment via bKash - Invoice ${sale.invoice_number}`,
@@ -96,7 +96,7 @@ export function BankInfoClient() {
               id: `TXN-NAGAD-${sale.id}`,
               date,
               time,
-              bankName: 'BRAC Bank Limited',
+              bankName: 'BRAC Bank Limited - Star Power',
               method: 'Nagad',
               amount: sale.nagad_received,
               description: `Sale payment via Nagad - Invoice ${sale.invoice_number}`,
@@ -326,7 +326,7 @@ export function BankInfoClient() {
                   <TableHead>Method</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>IMEI</TableHead>
+                  <TableHead>Voucher</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
