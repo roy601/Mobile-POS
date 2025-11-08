@@ -22,6 +22,10 @@ export function MainNav({ className, ...props }: React.HTMLAttributes<HTMLElemen
       label: "Expenses",
     },
     {
+      href: "/income",
+      label: "Income",
+    },
+    {
       href: "/sales",
       label: "Sales",
     },
