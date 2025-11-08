@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Edit, Trash2, Building, CreditCard, DollarSign, Download, Filter, Search } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Plus, Building, CreditCard, DollarSign, Filter, Search } from "lucide-react"
+import { createClient } from "@/utils/supabase/component"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +10,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
   DialogContent,
@@ -40,170 +40,182 @@ type Transaction = {
   id: string
   date: string
   time: string
-  type: "card" | "mobile_banking" | "bank_transfer"
+  bankName: string
   method: string
   amount: number
   description: string
-  reference: string
-  source: "pos" | "purchase" | "return" | "manual" | "expense"
   status: "completed" | "pending" | "failed"
   accountId: string
-  customerSupplier?: string
-  invoiceNumber?: string
+  imei: string
 }
 
 export function BankInfoClient() {
+  const supabase = createClient()
   const { hasPermission } = useRole()
-  const [showAddBank, setShowAddBank] = useState(false)
-  const [showEditBank, setShowEditBank] = useState(false)
   const [showAddTransaction, setShowAddTransaction] = useState(false)
-  const [selectedBank, setSelectedBank] = useState<BankAccount | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
-  const [filterType, setFilterType] = useState("all")
-  const [filterSource, setFilterSource] = useState("all")
-  const [selectedPeriod, setSelectedPeriod] = useState("this-month")
+  const [filterBankName, setFilterBankName] = useState("all")
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const [bankAccounts] = useState<BankAccount[]>([
-    {
-      id: "BANK-001",
-      bankName: "Dutch-Bangla Bank Limited",
-      accountName: "Mobile Shop Business Account",
-      accountNumber: "1234567890123",
-      accountType: "Current Account",
-      balance: 250000,
-      currency: "BDT",
-      status: "active",
-      branch: "Dhanmondi Branch",
-      swiftCode: "DBBLBDDHXXX",
-      routingNumber: "090261234",
-    },
-    {
-      id: "BANK-002",
-      bankName: "Islami Bank Bangladesh Limited",
-      accountName: "Mobile Shop Savings",
-      accountNumber: "2345678901234",
-      accountType: "Savings Account",
-      balance: 150000,
-      currency: "BDT",
-      status: "active",
-      branch: "Gulshan Branch",
-      swiftCode: "IBBLBDDHXXX",
-      routingNumber: "125261234",
-    },
-    {
-      id: "BANK-003",
-      bankName: "bKash Limited",
-      accountName: "Mobile Banking Account",
-      accountNumber: "01712345678",
-      accountType: "Mobile Banking",
-      balance: 75000,
-      currency: "BDT",
-      status: "active",
-      branch: "Digital Service",
-      routingNumber: "N/A",
-    },
-    {
-      id: "BANK-004",
-      bankName: "Nagad",
-      accountName: "Digital Wallet",
-      accountNumber: "01812345678",
-      accountType: "Mobile Banking",
-      balance: 45000,
-      currency: "BDT",
-      status: "active",
-      branch: "Digital Service",
-      routingNumber: "N/A",
-    },
-  ])
+  // Fetch transactions from Supabase sales table
+  useEffect(() => {
+    async function fetchBankTransactions() {
+      setLoading(true)
+      try {
+        const { data: sales, error } = await supabase
+          .from('sales')
+          .select('*')
+          .eq('status', 'completed')
+          .order('created_at', { ascending: false })
 
-  const [transactions] = useState<Transaction[]>([
-    {
-      id: "TXN-001",
-      date: "2024-01-20",
-      time: "14:30",
-      type: "mobile_banking",
-      method: "bKash",
-      amount: 25000,
-      description: "Sale payment from customer",
-      reference: "bKash-TXN-123456",
-      source: "pos",
-      status: "completed",
-      accountId: "BANK-003",
-      customerSupplier: "Ahmed Hassan",
-      invoiceNumber: "INV-2024-001",
-    },
-    {
-      id: "TXN-002",
-      date: "2024-01-20",
-      time: "11:15",
-      type: "card",
-      method: "Visa Card",
-      amount: 45000,
-      description: "Customer payment via card",
-      reference: "CARD-789012",
-      source: "pos",
-      status: "completed",
-      accountId: "BANK-001",
-      customerSupplier: "Fatima Khan",
-      invoiceNumber: "INV-2024-002",
-    },
-    {
-      id: "TXN-003",
-      date: "2024-01-19",
-      time: "16:45",
-      type: "bank_transfer",
-      method: "Bank Transfer",
-      amount: 150000,
-      description: "Supplier payment for inventory",
-      reference: "TRF-345678",
-      source: "purchase",
-      status: "completed",
-      accountId: "BANK-001",
-      customerSupplier: "TechSupplies Inc.",
-      invoiceNumber: "PUR-2024-005",
-    },
-    {
-      id: "TXN-004",
-      date: "2024-01-19",
-      time: "10:20",
-      type: "mobile_banking",
-      method: "Nagad",
-      amount: 15000,
-      description: "Return refund to customer",
-      reference: "NGD-567890",
-      source: "return",
-      status: "completed",
-      accountId: "BANK-004",
-      customerSupplier: "Mohammad Ali",
-      invoiceNumber: "RET-2024-001",
-    },
-    {
-      id: "TXN-005",
-      date: "2024-01-18",
-      time: "13:30",
-      type: "bank_transfer",
-      method: "Bank Transfer",
-      amount: 8000,
-      description: "Office rent payment",
-      reference: "RENT-JAN-2024",
-      source: "manual",
-      status: "completed",
-      accountId: "BANK-002",
-      customerSupplier: "Property Owner",
-    },
-  ])
+        if (error) {
+          console.error('Error fetching sales:', error)
+          setTransactions([])
+          return
+        }
+
+        // Transform sales data into transactions
+        const newTransactions: Transaction[] = []
+
+        sales?.forEach((sale) => {
+          // Use created_at for date and time
+          const saleDate = new Date(sale.created_at)
+          const date = saleDate.toISOString().split('T')[0]
+          const time = saleDate.toTimeString().slice(0, 5)
+
+          // bKash transactions - BRAC Bank
+          if (sale.bkash_received > 0) {
+            newTransactions.push({
+              id: `TXN-BKASH-${sale.id}`,
+              date,
+              time,
+              bankName: 'BRAC Bank Limited - Star Power',
+              method: 'bKash',
+              amount: sale.bkash_received,
+              description: `Sale payment via bKash - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-002',
+              imei: sale.id.toString()
+            })
+          }
+
+          // Nagad transactions - BRAC Bank
+          if (sale.nagad_received > 0) {
+            newTransactions.push({
+              id: `TXN-NAGAD-${sale.id}`,
+              date,
+              time,
+              bankName: 'BRAC Bank Limited - Star Power',
+              method: 'Nagad',
+              amount: sale.nagad_received,
+              description: `Sale payment via Nagad - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-002',
+              imei: sale.id.toString()
+            })
+          }
+
+          // Rocket transactions - Dutch-Bangla Bank
+          if (sale.rocket_received > 0) {
+            newTransactions.push({
+              id: `TXN-ROCKET-${sale.id}`,
+              date,
+              time,
+              bankName: 'Dutch-Bangla Bank Limited',
+              method: 'Rocket',
+              amount: sale.rocket_received,
+              description: `Sale payment via Rocket - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-001',
+              imei: sale.id.toString()
+            })
+          }
+
+          // Upay transactions - UCB Bank
+          if (sale.upay_received > 0) {
+            newTransactions.push({
+              id: `TXN-UPAY-${sale.id}`,
+              date,
+              time,
+              bankName: 'UCB Bank',
+              method: 'Upay',
+              amount: sale.upay_received,
+              description: `Sale payment via Upay - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-003',
+              imei: sale.id.toString()
+            })
+          }
+
+          // Card transactions - use card_bank from sale
+          if (sale.card_received > 0) {
+            newTransactions.push({
+              id: `TXN-CARD-${sale.id}`,
+              date,
+              time,
+              bankName: sale.card_bank || 'Unknown Bank',
+              method: 'Card Payment',
+              amount: sale.card_received,
+              description: `Card payment - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-001',
+              imei: sale.id.toString()
+            })
+          }
+
+          // Bank transfer transactions - use bank_transfer_bank from sale
+          if (sale.bank_transfer_received > 0) {
+            newTransactions.push({
+              id: `TXN-TRANSFER-${sale.id}`,
+              date,
+              time,
+              bankName: sale.bank_transfer_bank || 'Unknown Bank',
+              method: 'Bank Transfer',
+              amount: sale.bank_transfer_received,
+              description: `Bank transfer - Invoice ${sale.invoice_number}`,
+              status: 'completed',
+              accountId: 'BANK-001',
+              imei: sale.id.toString()
+            })
+          }
+        })
+
+        setTransactions(newTransactions)
+      } catch (error) {
+        console.error('Error processing transactions:', error)
+        setTransactions([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchBankTransactions()
+  }, [supabase])
 
   const filteredTransactions = transactions.filter((transaction) => {
     const matchesSearch =
       transaction.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transaction.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transaction.customerSupplier?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transaction.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+      transaction.imei.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      transaction.method.toLowerCase().includes(searchTerm.toLowerCase())
 
-    const matchesType = filterType === "all" || transaction.type === filterType
-    const matchesSource = filterSource === "all" || transaction.source === filterSource
+    const matchesBankName = filterBankName === "all" || transaction.bankName === filterBankName
 
-    return matchesSearch && matchesType && matchesSource
+    // Date range filter
+    let matchesDateRange = true
+    if (startDate || endDate) {
+      const transactionDate = transaction.date
+      if (startDate && transactionDate < startDate) {
+        matchesDateRange = false
+      }
+      if (endDate && transactionDate > endDate) {
+        matchesDateRange = false
+      }
+    }
+
+    return matchesSearch && matchesBankName && matchesDateRange
   })
 
   const getStatusBadge = (status: string) => {
@@ -219,53 +231,13 @@ export function BankInfoClient() {
     }
   }
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case "card":
-        return <CreditCard className="h-4 w-4 text-blue-600" />
-      case "mobile_banking":
-        return <DollarSign className="h-4 w-4 text-green-600" />
-      case "bank_transfer":
-        return <Building className="h-4 w-4 text-purple-600" />
-      default:
-        return <DollarSign className="h-4 w-4" />
-    }
-  }
-
-  const getSourceBadge = (source: string) => {
-    const colors = {
-      pos: "bg-blue-100 text-blue-800",
-      purchase: "bg-purple-100 text-purple-800",
-      return: "bg-orange-100 text-orange-800",
-      manual: "bg-gray-100 text-gray-800",
-      expense: "bg-red-100 text-red-800",
-    }
-    return (
-      <Badge className={colors[source as keyof typeof colors] || "bg-gray-100 text-gray-800"}>
-        {source.toUpperCase()}
-      </Badge>
-    )
-  }
-
-  const handleAddBank = () => {
-    setShowAddBank(false)
-    alert("Bank account added successfully!")
-  }
-
-  const handleEditBank = (bank: BankAccount) => {
-    setSelectedBank(bank)
-    setShowEditBank(true)
-  }
-
-  const handleUpdateBank = () => {
-    setShowEditBank(false)
-    setSelectedBank(null)
-    alert("Bank account updated successfully!")
-  }
-
-  const handleDeleteBank = (bank: BankAccount) => {
-    if (confirm(`Are you sure you want to delete ${bank.bankName} account?`)) {
-      alert("Bank account deleted successfully!")
+  const getBankIcon = (method: string) => {
+    if (method.toLowerCase().includes("card")) {
+      return <CreditCard className="h-4 w-4 text-blue-600" />
+    } else if (["bkash", "nagad", "rocket", "upay"].some(m => method.toLowerCase().includes(m))) {
+      return <DollarSign className="h-4 w-4 text-green-600" />
+    } else {
+      return <Building className="h-4 w-4 text-purple-600" />
     }
   }
 
@@ -274,9 +246,8 @@ export function BankInfoClient() {
     alert("Transaction added successfully!")
   }
 
-  const handleExportTransactions = () => {
-    alert("Transactions exported successfully!")
-  }
+  // Get unique bank names for filter
+  const uniqueBankNames = Array.from(new Set(transactions.map(t => t.bankName))).sort()
 
   return (
     <div className="flex-1 space-y-6 p-8 pt-6">
@@ -284,7 +255,7 @@ export function BankInfoClient() {
         <div>
           <h1 className="text-3xl font-bold">Bank Information</h1>
           <p className="text-muted-foreground">
-            Track all non-cash transactions from POS, purchases, returns and manual entries
+            Track all non-cash transactions from completed sales
           </p>
         </div>
         <div className="flex gap-2">
@@ -292,123 +263,99 @@ export function BankInfoClient() {
             <Plus className="mr-2 h-4 w-4" />
             Add Transaction
           </Button>
-          {hasPermission("bank_account_management") && (
-            <Button onClick={() => setShowAddBank(true)} className="bg-green-600 hover:bg-green-700">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Bank Account
-            </Button>
-          )}
         </div>
       </div>
 
-      <Tabs defaultValue="transactions" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="transactions">Transactions</TabsTrigger>
-          {hasPermission("bank_account_management") && <TabsTrigger value="accounts">Bank Accounts</TabsTrigger>}
-        </TabsList>
-
-        <TabsContent value="transactions" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Filter className="mr-2 h-5 w-5" />
-                Transaction Filters
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <div>
-                  <Label htmlFor="search-transactions">Search</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="search-transactions"
-                      placeholder="Search transactions..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="filter-type">Transaction Type</Label>
-                  <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All Types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Types</SelectItem>
-                      <SelectItem value="card">Card Payment</SelectItem>
-                      <SelectItem value="mobile_banking">Mobile Banking</SelectItem>
-                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="filter-source">Source</Label>
-                  <Select value={filterSource} onValueChange={setFilterSource}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All Sources" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Sources</SelectItem>
-                      <SelectItem value="pos">POS Sales</SelectItem>
-                      <SelectItem value="purchase">Purchases</SelectItem>
-                      <SelectItem value="return">Returns</SelectItem>
-                      <SelectItem value="manual">Manual Entry</SelectItem>
-                      <SelectItem value="expense">Expenses</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="filter-period">Period</Label>
-                  <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Period" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="today">Today</SelectItem>
-                      <SelectItem value="this-week">This Week</SelectItem>
-                      <SelectItem value="this-month">This Month</SelectItem>
-                      <SelectItem value="last-month">Last Month</SelectItem>
-                      <SelectItem value="this-year">This Year</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-end">
-                  <Button onClick={handleExportTransactions} variant="outline" className="w-full bg-transparent">
-                    <Download className="mr-2 h-4 w-4" />
-                    Export
-                  </Button>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Filter className="mr-2 h-5 w-5" />
+              Transaction Filters
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <Label htmlFor="search-transactions">Search</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="search-transactions"
+                    placeholder="Search transactions..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
                 </div>
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <Label htmlFor="filter-bank-name">Bank Name</Label>
+                <Select value={filterBankName} onValueChange={setFilterBankName}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Banks" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Banks</SelectItem>
+                    {uniqueBankNames.map((bankName) => (
+                      <SelectItem key={bankName} value={bankName}>
+                        {bankName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="start-date">Start Date</Label>
+                <Input
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="end-date">End Date</Label>
+                <Input
+                  id="end-date"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Non-Cash Transactions</CardTitle>
-              <CardDescription>
-                All card, mobile banking, and bank transfer transactions from various sources
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
+        <Card>
+          <CardHeader>
+            <CardTitle>Non-Cash Transactions</CardTitle>
+            <CardDescription>
+              All card, mobile banking, and bank transfer transactions from completed sales
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date & Time</TableHead>
+                  <TableHead>Bank Name</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>IMEI</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
                   <TableRow>
-                    <TableHead>Date & Time</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Method</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Reference</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Customer/Supplier</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      Loading transactions...
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredTransactions.map((transaction) => (
+                ) : filteredTransactions.length > 0 ? (
+                  filteredTransactions.map((transaction) => (
                     <TableRow key={transaction.id}>
                       <TableCell>
                         <div>
@@ -418,91 +365,29 @@ export function BankInfoClient() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          {getTypeIcon(transaction.type)}
-                          <span className="capitalize">{transaction.type.replace("_", " ")}</span>
+                          {getBankIcon(transaction.method)}
+                          <span>{transaction.bankName}</span>
                         </div>
                       </TableCell>
                       <TableCell>{transaction.method}</TableCell>
                       <TableCell className="font-medium">৳{transaction.amount.toLocaleString()}</TableCell>
                       <TableCell className="max-w-48 truncate">{transaction.description}</TableCell>
-                      <TableCell className="font-mono text-sm">{transaction.reference}</TableCell>
-                      <TableCell>{getSourceBadge(transaction.source)}</TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{transaction.customerSupplier}</p>
-                          {transaction.invoiceNumber && (
-                            <p className="text-sm text-muted-foreground">{transaction.invoiceNumber}</p>
-                          )}
-                        </div>
-                      </TableCell>
+                      <TableCell className="font-mono text-sm">{transaction.imei}</TableCell>
                       <TableCell>{getStatusBadge(transaction.status)}</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {filteredTransactions.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  No transactions found matching your criteria.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {hasPermission("bank_account_management") && (
-          <TabsContent value="accounts" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Bank Accounts</CardTitle>
-                <CardDescription>All your bank accounts and financial information</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Bank Name</TableHead>
-                      <TableHead>Account Name</TableHead>
-                      <TableHead>Account Number</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead className="text-right">Balance</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {bankAccounts.map((account) => (
-                      <TableRow key={account.id}>
-                        <TableCell className="font-medium">{account.bankName}</TableCell>
-                        <TableCell>{account.accountName}</TableCell>
-                        <TableCell className="font-mono">{account.accountNumber}</TableCell>
-                        <TableCell>{account.accountType}</TableCell>
-                        <TableCell>{account.branch}</TableCell>
-                        <TableCell className="text-right font-medium">৳{account.balance.toLocaleString()}</TableCell>
-                        <TableCell>
-                          <Badge variant={account.status === "active" ? "outline" : "secondary"}>
-                            {account.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => handleEditBank(account)}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" onClick={() => handleDeleteBank(account)}>
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
-      </Tabs>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No transactions found matching your criteria.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Add Transaction Dialog */}
       <Dialog open={showAddTransaction} onOpenChange={setShowAddTransaction}>
@@ -522,37 +407,37 @@ export function BankInfoClient() {
                 <Input id="transaction-time" type="time" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="transaction-type">Transaction Type*</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="card">Card Payment</SelectItem>
-                    <SelectItem value="mobile_banking">Mobile Banking</SelectItem>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="transaction-method">Payment Method*</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bkash">bKash</SelectItem>
-                    <SelectItem value="nagad">Nagad</SelectItem>
-                    <SelectItem value="rocket">Rocket</SelectItem>
-                    <SelectItem value="upay">Upay</SelectItem>
-                    <SelectItem value="visa">Visa Card</SelectItem>
-                    <SelectItem value="mastercard">MasterCard</SelectItem>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <Label htmlFor="transaction-bank-name">Bank Name*</Label>
+              <Select>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bank" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BRAC Bank Limited">BRAC Bank Limited</SelectItem>
+                  <SelectItem value="Dutch-Bangla Bank Limited">Dutch-Bangla Bank Limited</SelectItem>
+                  <SelectItem value="UCB Bank">UCB Bank</SelectItem>
+                  <SelectItem value="City Bank Limited">City Bank Limited</SelectItem>
+                  <SelectItem value="Islami Bank Bangladesh Limited">Islami Bank Bangladesh Limited</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="transaction-method">Payment Method*</Label>
+              <Select>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bKash">bKash</SelectItem>
+                  <SelectItem value="Nagad">Nagad</SelectItem>
+                  <SelectItem value="Rocket">Rocket</SelectItem>
+                  <SelectItem value="Upay">Upay</SelectItem>
+                  <SelectItem value="Visa Card">Visa Card</SelectItem>
+                  <SelectItem value="MasterCard">MasterCard</SelectItem>
+                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label htmlFor="transaction-amount">Amount*</Label>
@@ -562,30 +447,9 @@ export function BankInfoClient() {
               <Label htmlFor="transaction-description">Description*</Label>
               <Textarea id="transaction-description" placeholder="Enter transaction description" />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="transaction-reference">Reference Number</Label>
-                <Input id="transaction-reference" placeholder="Transaction reference" />
-              </div>
-              <div>
-                <Label htmlFor="transaction-account">Bank Account*</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {bankAccounts.map((account) => (
-                      <SelectItem key={account.id} value={account.id}>
-                        {account.bankName} - {account.accountNumber}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
             <div>
-              <Label htmlFor="customer-supplier">Customer/Supplier</Label>
-              <Input id="customer-supplier" placeholder="Enter customer or supplier name" />
+              <Label htmlFor="transaction-imei">IMEI/Sale ID*</Label>
+              <Input id="transaction-imei" placeholder="Enter IMEI or sale ID" />
             </div>
           </div>
           <DialogFooter>
@@ -598,170 +462,6 @@ export function BankInfoClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Add Bank Account Dialog */}
-      {hasPermission("bank_account_management") && (
-        <Dialog open={showAddBank} onOpenChange={setShowAddBank}>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Add Bank Account</DialogTitle>
-              <DialogDescription>Add a new bank account to your financial records</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="bank-name">Bank Name*</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select bank" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dbbl">Dutch-Bangla Bank Limited</SelectItem>
-                    <SelectItem value="ibbl">Islami Bank Bangladesh Limited</SelectItem>
-                    <SelectItem value="brac">BRAC Bank Limited</SelectItem>
-                    <SelectItem value="city">City Bank Limited</SelectItem>
-                    <SelectItem value="bkash">bKash Limited</SelectItem>
-                    <SelectItem value="nagad">Nagad</SelectItem>
-                    <SelectItem value="rocket">Rocket</SelectItem>
-                    <SelectItem value="upay">Upay</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="account-name">Account Name*</Label>
-                <Input id="account-name" placeholder="Enter account holder name" />
-              </div>
-              <div>
-                <Label htmlFor="account-number">Account Number*</Label>
-                <Input id="account-number" placeholder="Enter account number" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="account-type">Account Type*</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="current">Current Account</SelectItem>
-                      <SelectItem value="savings">Savings Account</SelectItem>
-                      <SelectItem value="mobile">Mobile Banking</SelectItem>
-                      <SelectItem value="fixed">Fixed Deposit</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="initial-balance">Initial Balance</Label>
-                  <Input id="initial-balance" type="number" placeholder="0.00" />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="branch">Branch*</Label>
-                <Input id="branch" placeholder="Enter branch name" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="swift-code">SWIFT Code</Label>
-                  <Input id="swift-code" placeholder="Enter SWIFT code" />
-                </div>
-                <div>
-                  <Label htmlFor="routing-number">Routing Number</Label>
-                  <Input id="routing-number" placeholder="Enter routing number" />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddBank(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAddBank} className="bg-green-600 hover:bg-green-700">
-                Add Account
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Edit Bank Account Dialog */}
-      {hasPermission("bank_account_management") && (
-        <Dialog open={showEditBank} onOpenChange={setShowEditBank}>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Edit Bank Account</DialogTitle>
-              <DialogDescription>Update bank account information</DialogDescription>
-            </DialogHeader>
-            {selectedBank && (
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="edit-bank-name">Bank Name*</Label>
-                  <Input id="edit-bank-name" defaultValue={selectedBank.bankName} />
-                </div>
-                <div>
-                  <Label htmlFor="edit-account-name">Account Name*</Label>
-                  <Input id="edit-account-name" defaultValue={selectedBank.accountName} />
-                </div>
-                <div>
-                  <Label htmlFor="edit-account-number">Account Number*</Label>
-                  <Input id="edit-account-number" defaultValue={selectedBank.accountNumber} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="edit-account-type">Account Type*</Label>
-                    <Select defaultValue={selectedBank.accountType.toLowerCase().replace(" ", "")}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="current">Current Account</SelectItem>
-                        <SelectItem value="savings">Savings Account</SelectItem>
-                        <SelectItem value="mobile">Mobile Banking</SelectItem>
-                        <SelectItem value="fixed">Fixed Deposit</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="edit-balance">Current Balance</Label>
-                    <Input id="edit-balance" type="number" defaultValue={selectedBank.balance} />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="edit-branch">Branch*</Label>
-                  <Input id="edit-branch" defaultValue={selectedBank.branch} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="edit-swift-code">SWIFT Code</Label>
-                    <Input id="edit-swift-code" defaultValue={selectedBank.swiftCode || ""} />
-                  </div>
-                  <div>
-                    <Label htmlFor="edit-routing-number">Routing Number</Label>
-                    <Input id="edit-routing-number" defaultValue={selectedBank.routingNumber || ""} />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="edit-status">Status</Label>
-                  <Select defaultValue={selectedBank.status}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowEditBank(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleUpdateBank} className="bg-green-600 hover:bg-green-700">
-                Update Account
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   )
 }

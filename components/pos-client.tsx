@@ -67,15 +67,6 @@ type ProductResponse = {
 type BankAccount = {
   id: string;
   bankName: string;
-  accountName: string;
-  accountNumber: string;
-  accountType: string;
-  balance: number;
-  currency: string;
-  status: "active" | "inactive";
-  branch: string;
-  swiftCode?: string;
-  routingNumber?: string;
 };
 
 export function POSClient() {
@@ -121,42 +112,23 @@ export function POSClient() {
   const [bankAccounts] = useState<BankAccount[]>([
     {
       id: "BANK-001",
-      bankName: "Dutch-Bangla Bank Limited",
-      accountName: "Mobile Shop Business Account",
-      accountNumber: "1234567890123",
-      accountType: "Current Account",
-      balance: 250000,
-      currency: "BDT",
-      status: "active",
-      branch: "Dhanmondi Branch",
-      swiftCode: "DBBLBDDHXXX",
-      routingNumber: "090261234",
+      bankName: "BRAC Bank Limited - Star Power",
     },
     {
       id: "BANK-002",
-      bankName: "Islami Bank Bangladesh Limited",
-      accountName: "Mobile Shop Savings",
-      accountNumber: "2345678901234",
-      accountType: "Savings Account",
-      balance: 150000,
-      currency: "BDT",
-      status: "active",
-      branch: "Gulshan Branch",
-      swiftCode: "IBBLBDDHXXX",
-      routingNumber: "125261234",
+      bankName: "BRAC Bank Limited - Star Communication",
     },
     {
       id: "BANK-003",
-      bankName: "BRAC Bank Limited",
-      accountName: "Business Account",
-      accountNumber: "3456789012345",
-      accountType: "Current Account",
-      balance: 180000,
-      currency: "BDT",
-      status: "active",
-      branch: "Banani Branch",
-      swiftCode: "BRAKBDDHXXX",
-      routingNumber: "060261234",
+      bankName: "City Bank Limited - Star Power",
+    },
+    {
+      id: "BANK-004",
+      bankName: "City Bank Limited - Star Communication",
+    },
+    {
+      id: "BANK-005",
+      bankName: "Dutch-Bangla Bank Limited",
     },
   ]);
 
@@ -1808,7 +1780,6 @@ export function POSClient() {
                   <SelectContent>
                     {bankAccounts.map((bank) => (
                       <SelectItem key={bank.id} value={bank.bankName}>
-                        {bank.bankName} - {bank.accountNumber}
                       </SelectItem>
                     ))}
                   </SelectContent>
