@@ -66,208 +66,189 @@ export function DayCashbook() {
   }, [startDate, endDate])
 
   const loadCashbookData = async (start: string, end: string) => {
-    setLoading(true)
-    setError(null)
+  setLoading(true)
+  setError(null)
+  
+  try {
+    // Get BFC from the day before start date
+    const prevDate = new Date(start)
+    prevDate.setDate(prevDate.getDate() - 1)
+    const previousDate = prevDate.toISOString().split('T')[0]
     
+    // Initialize default data
+    let salesData: {
+      totalSalesAmount: number
+      cashAmount: number
+      bankAmount: number
+      duesAmount: number
+    } = { 
+      totalSalesAmount: 0, 
+      cashAmount: 0, 
+      bankAmount: 0, 
+      duesAmount: 0
+    }
+    let purchaseData = { totalAmount: 0, numPurchases: 0 }
+    let returnsData = { salesReturns: 0, purchaseReturns: 0 }
+    let expensesData: {
+      individualExpenses: any[]
+    } = {
+      individualExpenses: []
+    }
+    let incomeData: {
+      individualIncomes: any[]
+    } = {
+      individualIncomes: []
+    }
+    let bfcAmount = 0
+
     try {
-      // Get BFC from the day before start date
-      const prevDate = new Date(start)
-      prevDate.setDate(prevDate.getDate() - 1)
-      const previousDate = prevDate.toISOString().split('T')[0]
-      
-      // Initialize default data
-      let salesData: {
-        totalSalesAmount: number
-        cashAmount: number
-        bankAmount: number
-        duesAmount: number
-      } = { 
-        totalSalesAmount: 0, 
-        cashAmount: 0, 
-        bankAmount: 0, 
-        duesAmount: 0
-      }
-      let purchaseData = { totalAmount: 0, numPurchases: 0 }
-      let returnsData = { salesReturns: 0, purchaseReturns: 0 }
-      let expensesData: {
-        individualExpenses: any[]
-      } = {
-        individualExpenses: []
-      }
-      let incomeData: {
-        individualIncomes: any[]
-      } = {
-        individualIncomes: []
-      }
-      let bfcAmount = 0
-
-      try {
-        const results = await Promise.all([
-          getSalesData(start, end).catch(err => {
-            console.warn('Sales data error:', err)
-            return salesData
-          }),
-          getPurchaseData(start, end).catch(err => {
-            console.warn('Purchase data error:', err)
-            return purchaseData
-          }),
-          getReturnsData(start, end).catch(err => {
-            console.warn('Returns data error:', err)
-            return returnsData
-          }),
-          getExpensesData(start, end).catch(err => {
-            console.warn('Expenses data error:', err)
-            return expensesData
-          }),
-          getIncomeData(start, end).catch(err => {
-            console.warn('Income data error:', err)
-            return incomeData
-          }),
-          getPreviousBalance(previousDate).catch(err => {
-            console.warn('Previous balance error:', err)
-            return 0
-          })
-        ])
-
-        salesData = results[0] || salesData
-        purchaseData = results[1] || purchaseData
-        returnsData = results[2] || returnsData
-        expensesData = results[3] || expensesData
-        incomeData = results[4] || incomeData
-        bfcAmount = results[5] || 0
-      } catch (err) {
-        console.error('Error loading data:', err)
-      }
-      
-      // Build entries array
-      const entries: CashbookEntry[] = []
-
-      // Add BFC entry
-      if (bfcAmount >= 0) {
-        // Positive balance = cash in hand = Debit
-        entries.push({
-          particulars: "BFC (Brought Forward Cash)",
-          debit: bfcAmount,
-          credit: 0
+      const results = await Promise.all([
+        getSalesData(start, end).catch(err => {
+          console.warn('Sales data error:', err)
+          return salesData
+        }),
+        getPurchaseData(start, end).catch(err => {
+          console.warn('Purchase data error:', err)
+          return purchaseData
+        }),
+        getReturnsData(start, end).catch(err => {
+          console.warn('Returns data error:', err)
+          return returnsData
+        }),
+        getExpensesData(start, end).catch(err => {
+          console.warn('Expenses data error:', err)
+          return expensesData
+        }),
+        getIncomeData(start, end).catch(err => {
+          console.warn('Income data error:', err)
+          return incomeData
+        }),
+        getPreviousBalance(previousDate).catch(err => {
+          console.warn('Previous balance error:', err)
+          return 0
         })
-      } else {
-        // Negative balance = amount due = Credit
-        entries.push({
-          particulars: "BFC (Brought Forward Cash)",
-          debit: 0,
-          credit: Math.abs(bfcAmount)
-        })
-      }
+      ])
 
-      // Total Sales Amount (all sales revenue)
+      salesData = results[0] || salesData
+      purchaseData = results[1] || purchaseData
+      returnsData = results[2] || returnsData
+      expensesData = results[3] || expensesData
+      incomeData = results[4] || incomeData
+      bfcAmount = results[5] || 0
+    } catch (err) {
+      console.error('Error loading data:', err)
+    }
+    
+    // Build entries array
+    const entries: CashbookEntry[] = []
+
+    // Add BFC entry (opening balance)
+    entries.push({
+      particulars: "BFC (Brought Forward Cash)",
+      debit: bfcAmount >= 0 ? bfcAmount : 0,
+      credit: bfcAmount < 0 ? Math.abs(bfcAmount) : 0
+    })
+
+    // Cash Sales (actual cash received, not total sales)
+    if (salesData.cashAmount > 0) {
       entries.push({
-        particulars: "Total Sales Amount",
-        debit: salesData.totalSalesAmount || 0,
+        particulars: "Cash Sales",
+        debit: salesData.cashAmount,
         credit: 0
       })
-
-      // Bank Cash entry - split between cash and bank
-      // If we received more in bank than cash, show the bank amount in Cr (cash in bank)
-      // If we received more in cash, show difference in Dr
-      const netBankCash = salesData.bankAmount
-      if (netBankCash > 0) {
-        // More bank receipts = we have cash in bank (Credit)
-        entries.push({
-          particulars: "Bank Cash",
-          debit: 0,
-          credit: netBankCash
-        })
-      } else if (netBankCash < 0) {
-        // More cash receipts = we have bank dues (Debit)
-        entries.push({
-          particulars: "Bank Cash",
-          debit: Math.abs(netBankCash),
-          credit: 0
-        })
-      }
-
-      // Sales Dues
-      if (salesData.duesAmount > 0) {
-        entries.push({
-          particulars: "Sales Dues",
-          debit: 0,
-          credit: salesData.duesAmount
-        })
-      }
-
-      // Purchase Returns (money/credit coming back from suppliers)
-      if (returnsData.purchaseReturns > 0) {
-        entries.push({
-          particulars: "Purchase Returns (Credit from Suppliers)",
-          debit: returnsData.purchaseReturns,
-          credit: 0
-        })
-      }
-
-      // Add individual income transactions (as Debit - money coming in)
-      if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
-        incomeData.individualIncomes.forEach((income: any) => {
-          const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'
-          const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
-          const description = income.description ? ` - ${income.description}` : ''
-          
-          entries.push({
-            particulars: `${incomeTypeLabel} (${destinationLabel})${description}`,
-            debit: income.amount || 0,
-            credit: 0
-          })
-        })
-      }
-
-      // Sales Returns (refunds paid to customers)
-      if (returnsData.salesReturns > 0) {
-        entries.push({
-          particulars: "Sales Returns (Refunds to Customers)",
-          debit: 0,
-          credit: returnsData.salesReturns
-        })
-      }
-
-      // Add individual expense transactions
-      if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
-        expensesData.individualExpenses.forEach((expense: any) => {
-          const category = expense.custom_category || expense.category || 'Other'
-          entries.push({
-            particulars: `${category} - ${expense.description}`,
-            debit: 0,
-            credit: expense.amount || 0
-          })
-        })
-      }
-
-      // Calculate totals
-      const totalDebit = entries.reduce((sum, entry) => sum + entry.debit, 0)
-      const totalCredit = entries.reduce((sum, entry) => sum + entry.credit, 0)
-      const cashInHand = totalDebit - totalCredit
-
-      const data: CashbookData = {
-        startDate: start,
-        endDate: end,
-        entries: entries,
-        totalDebit: totalDebit,
-        totalCredit: totalCredit,
-        cashInHand: cashInHand
-      }
-
-      setCashbookData(data)
-      
-    } catch (err: any) {
-      console.error("Error loading cashbook data:", err)
-      setError(err.message || "Failed to load cashbook data")
-      toast({
-        title: "Error",
-        description: "Failed to load cashbook data",
-        variant: "destructive"
-      })
-    } finally {
-      setLoading(false)
     }
+
+    // Bank/Digital Payments (money received via bank/digital means)
+    if (salesData.bankAmount > 0) {
+      entries.push({
+        particulars: "Bank/Digital Payments",
+        debit: salesData.bankAmount,
+        credit: 0
+      })
+    }
+
+    // Purchase Returns (money/credit coming back from suppliers)
+    if (returnsData.purchaseReturns > 0) {
+      entries.push({
+        particulars: "Purchase Returns",
+        debit: returnsData.purchaseReturns,
+        credit: 0
+      })
+    }
+
+    // Add individual income transactions
+    if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
+      incomeData.individualIncomes.forEach((income: any) => {
+        const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'
+        const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
+        const description = income.description ? ` - ${income.description}` : ''
+        
+        entries.push({
+          particulars: `${incomeTypeLabel} (${destinationLabel})${description}`,
+          debit: income.amount || 0,
+          credit: 0
+        })
+      })
+    }
+
+    // Purchases (money paid out for inventory)
+    if (purchaseData.totalAmount > 0) {
+      entries.push({
+        particulars: "Purchases",
+        debit: 0,
+        credit: purchaseData.totalAmount
+      })
+    }
+
+    // Sales Returns (refunds paid to customers)
+    if (returnsData.salesReturns > 0) {
+      entries.push({
+        particulars: "Sales Returns (Refunds)",
+        debit: 0,
+        credit: returnsData.salesReturns
+      })
+    }
+
+    // Add individual expense transactions
+    if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
+      expensesData.individualExpenses.forEach((expense: any) => {
+        const category = expense.custom_category || expense.category || 'Other'
+        entries.push({
+          particulars: `${category} - ${expense.description}`,
+          debit: 0,
+          credit: expense.amount || 0
+        })
+      })
+    }
+
+    // Calculate totals
+    const totalDebit = entries.reduce((sum, entry) => sum + entry.debit, 0)
+    const totalCredit = entries.reduce((sum, entry) => sum + entry.credit, 0)
+    const cashInHand = totalDebit - totalCredit
+
+    const data: CashbookData = {
+      startDate: start,
+      endDate: end,
+      entries: entries,
+      totalDebit: totalDebit,
+      totalCredit: totalCredit,
+      cashInHand: cashInHand
+    }
+
+    setCashbookData(data)
+    
+  } catch (err: any) {
+    console.error("Error loading cashbook data:", err)
+    setError(err.message || "Failed to load cashbook data")
+    toast({
+      title: "Error",
+      description: "Failed to load cashbook data",
+      variant: "destructive"
+    })
+  } finally {
+    setLoading(false)
   }
+}
 
   const getSalesData = async (start: string, end: string) => {
     try {
