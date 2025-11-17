@@ -327,6 +327,139 @@ export default function SalesPageClient() {
     })
   }
 
+  // NEW: Custom print function for sales history
+  const handlePrintSalesHistory = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    // Determine date range display
+    let dateRangeText = "All Time"
+    if (startDate && endDate) {
+      dateRangeText = `${new Date(startDate).toLocaleDateString('en-GB')} to ${new Date(endDate).toLocaleDateString('en-GB')}`
+    } else if (startDate) {
+      dateRangeText = `From ${new Date(startDate).toLocaleDateString('en-GB')}`
+    } else if (endDate) {
+      dateRangeText = `Up to ${new Date(endDate).toLocaleDateString('en-GB')}`
+    }
+
+    const content = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Sales History Report</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 15px; font-size: 12px; }
+          .header { text-align: center; margin-bottom: 20px; }
+          .company-name { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+          .title { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+          .period { font-size: 12px; margin-bottom: 5px; }
+          .filters { font-size: 11px; color: #666; margin-bottom: 15px; }
+          .summary { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+          .summary-item { text-align: center; }
+          .summary-label { font-size: 11px; color: #666; margin-bottom: 5px; }
+          .summary-value { font-size: 16px; font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin: 20px 0; border: 2px solid black; }
+          th, td { border: 1px solid black; padding: 6px; text-align: left; font-size: 11px; }
+          th { background-color: #f0f0f0; font-weight: bold; text-align: center; }
+          .amount-cell { text-align: right; font-family: monospace; }
+          .total-row { font-weight: bold; background-color: #f0f0f0; }
+          @media print { body { margin: 10px; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-name">STAR POWER</div>
+          <div class="title">Sales History Report</div>
+          <div class="period">Period: ${dateRangeText}</div>
+          ${brandFilter !== "all" || categoryFilter !== "all" || query ? `
+            <div class="filters">
+              ${brandFilter !== "all" ? `Brand: ${brandFilter} • ` : ''}
+              ${categoryFilter !== "all" ? `Category: ${categoryFilter} • ` : ''}
+              ${query ? `Search: "${query}"` : ''}
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="summary">
+          <div class="summary-grid">
+            <div class="summary-item">
+              <div class="summary-label">Total Transactions</div>
+              <div class="summary-value">${totalTransactions}</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-label">Total Items Sold</div>
+              <div class="summary-value">${totalItemsSold.toLocaleString()}</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-label">Total Revenue</div>
+              <div class="summary-value">${bdAmount(totalRevenue)}</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-label">Total Profit</div>
+              <div class="summary-value">${bdAmount(totalProfit)}</div>
+            </div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice ID</th>
+              <th>Date & Time</th>
+              <th>Customer</th>
+              <th>Items</th>
+              <th>Payment</th>
+              <th>Status</th>
+              <th>Total</th>
+              <th>Discount</th>
+              <th>Profit</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredSales.map(sale => {
+              const totalCost = sale.products.reduce((sum, p) => {
+                const costPrice = Number(p.cost_price) || 0
+                const quantity = Number(p.quantity) || 0
+                return sum + (costPrice * quantity)
+              }, 0)
+              const saleProfit = sale.total - totalCost
+              
+              return `
+                <tr>
+                  <td>${sale.id}</td>
+                  <td>${sale.dateISO} ${sale.timeLabel}</td>
+                  <td>${sale.customer || '—'}</td>
+                  <td>${sale.itemsCount}</td>
+                  <td>${sale.payment || '—'}</td>
+                  <td>${sale.status || '—'}</td>
+                  <td class="amount-cell">${bdAmount(sale.total)}</td>
+                  <td class="amount-cell">${bdAmount(sale.totalDiscount)}</td>
+                  <td class="amount-cell">${bdAmount(saleProfit)}</td>
+                </tr>
+              `
+            }).join('')}
+            <tr class="total-row">
+              <td colspan="6">TOTAL</td>
+              <td class="amount-cell">${bdAmount(totalRevenue)}</td>
+              <td class="amount-cell">${bdAmount(filteredSales.reduce((sum, s) => sum + s.totalDiscount, 0))}</td>
+              <td class="amount-cell">${bdAmount(totalProfit)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="margin-top: 30px; text-align: center; font-size: 11px; color: #666;">
+          Generated on ${new Date().toLocaleString('en-GB')}
+        </div>
+      </body>
+      </html>
+    `
+
+    printWindow.document.write(content)
+    printWindow.document.close()
+    printWindow.print()
+  }
+
   // UPDATED: CSV export with sale-level total_discount for profit calculation
   const handleExportCSV = () => {
     try {
@@ -460,9 +593,8 @@ export default function SalesPageClient() {
             Export CSV
           </Button>
           <Button 
-            onClick={() => {
-              window.print()
-            }}
+            onClick={handlePrintSalesHistory}
+            disabled={filteredSales.length === 0}
           >
             Print Report
           </Button>

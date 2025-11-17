@@ -32,6 +32,7 @@ export function DayCashbook() {
   const today = new Date().toISOString().split('T')[0]
   const [startDate, setStartDate] = useState<string>(today)
   const [endDate, setEndDate] = useState<string>(today)
+  const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [cashbookData, setCashbookData] = useState<CashbookData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,15 +56,35 @@ export function DayCashbook() {
   }
 
   useEffect(() => {
-    if (startDate && endDate) {
-      // Validate date range
-      if (new Date(startDate) > new Date(endDate)) {
-        setError("Start date cannot be after end date")
-        return
+    if (dateFilterEnabled) {
+      if (startDate && endDate) {
+        // Validate date range
+        if (new Date(startDate) > new Date(endDate)) {
+          setError("Start date cannot be after end date")
+          return
+        }
+        loadCashbookData(startDate, endDate)
+      } else if (startDate && !endDate) {
+        // Only start date - from that date to today
+        loadCashbookData(startDate, today)
+      } else if (!startDate && endDate) {
+        // Only end date - from beginning to that date
+        loadCashbookData('2000-01-01', endDate)
+      } else {
+        // No dates - show all time
+        loadCashbookData('2000-01-01', today)
       }
-      loadCashbookData(startDate, endDate)
     }
-  }, [startDate, endDate])
+  }, [startDate, endDate, dateFilterEnabled])
+
+  // Get the date range description
+  const getDateRangeDescription = () => {
+    if (!dateFilterEnabled) return "Date filter disabled"
+    if (!startDate && !endDate) return "All time"
+    if (!startDate && endDate) return `All data up to ${new Date(endDate).toLocaleDateString('en-GB')}`
+    if (startDate && !endDate) return `From ${new Date(startDate).toLocaleDateString('en-GB')} onwards`
+    return `${new Date(startDate).toLocaleDateString('en-GB')} to ${new Date(endDate).toLocaleDateString('en-GB')}`
+  }
 
   const loadCashbookData = async (start: string, end: string) => {
   setLoading(true)
@@ -149,7 +170,7 @@ export function DayCashbook() {
       credit: bfcAmount < 0 ? Math.abs(bfcAmount) : 0
     })
 
-    // Cash Sales (actual cash received, not total sales)
+    // Cash Sales (actual cash received, money IN)
     if (salesData.cashAmount > 0) {
       entries.push({
         particulars: "Cash Sales",
@@ -158,12 +179,12 @@ export function DayCashbook() {
       })
     }
 
-    // Bank/Digital Payments (money received via bank/digital means)
+    // UPDATED: Bank/Digital Payments (money goes to bank, not cash in hand - CREDIT)
     if (salesData.bankAmount > 0) {
       entries.push({
         particulars: "Bank/Digital Payments",
-        debit: salesData.bankAmount,
-        credit: 0
+        debit: 0,
+        credit: salesData.bankAmount
       })
     }
 
@@ -455,14 +476,15 @@ export function DayCashbook() {
       // Calculate total income amount
       const totalIncome = incomeResult.individualIncomes.reduce((sum, income) => sum + income.amount, 0)
 
-      // Calculate total debits (money in)
-      const totalDebits = salesResult.totalSalesAmount + returnsResult.purchaseReturns + totalIncome
+      // UPDATED: Calculate total debits (money in) - now EXCLUDING bankAmount
+      const totalDebits = salesResult.cashAmount + returnsResult.purchaseReturns + totalIncome
 
-      // Calculate total credits (money out)
+      // UPDATED: Calculate total credits (money out) - now INCLUDING bankAmount
       const totalCredits = purchaseResult.totalAmount + 
         returnsResult.salesReturns +
         expensesResult.individualExpenses.reduce((sum, exp) => sum + exp.amount, 0) +
-        salesResult.duesAmount
+        salesResult.duesAmount +
+        salesResult.bankAmount  // Bank payments reduce cash in hand
 
       // Cash in hand = Dr - Cr
       const balance = totalDebits - totalCredits
@@ -499,11 +521,13 @@ export function DayCashbook() {
 
     const formatAmount = (amount: number) => amount.toFixed(2)
 
+    const dateRangeText = getDateRangeDescription()
+
     return `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Cash Book - ${formatDate(cashbookData.startDate)} to ${formatDate(cashbookData.endDate)}</title>
+        <title>Cash Book - ${dateRangeText}</title>
         <style>
           body { 
             font-family: Arial, sans-serif; 
@@ -579,7 +603,7 @@ export function DayCashbook() {
           <div class="address">
             Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
           </div>
-          <div class="period">PERIOD : ${formatDate(cashbookData.startDate)}----${formatDate(cashbookData.endDate)}</div>
+          <div class="period">${dateRangeText}</div>
           <div class="title">CASH BOOK</div>
         </div>
 
@@ -629,7 +653,7 @@ export function DayCashbook() {
               Read Only
             </div>
           )}
-          <Button variant="outline" onClick={() => loadCashbookData(startDate, endDate)} disabled={loading}>
+          <Button variant="outline" onClick={() => dateFilterEnabled && loadCashbookData(startDate || '2000-01-01', endDate || today)} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
@@ -640,7 +664,7 @@ export function DayCashbook() {
         </div>
       </div>
 
-      {/* Date Range Selection */}
+      {/* Date Range Selection - UPDATED with flexible dates */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -649,30 +673,72 @@ export function DayCashbook() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
-            <div>
-              <Label htmlFor="start-date">From Date</Label>
-              <Input
-                id="start-date"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-48"
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="enable-date-filter"
+                checked={dateFilterEnabled}
+                onChange={(e) => setDateFilterEnabled(e.target.checked)}
+                className="h-4 w-4"
+                title="Enable date filter"
               />
+              <Label htmlFor="enable-date-filter" className="cursor-pointer">
+                Enable Date Filter
+              </Label>
             </div>
-            <div>
-              <Label htmlFor="end-date">To Date</Label>
-              <Input
-                id="end-date"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-48"
-              />
-            </div>
-            <div className="text-sm text-muted-foreground mt-6">
-              Period: {new Date(startDate).toLocaleDateString('en-GB')} - {new Date(endDate).toLocaleDateString('en-GB')}
-            </div>
+            
+            {dateFilterEnabled && (
+              <>
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div>
+                    <Label htmlFor="start-date">From Date (optional)</Label>
+                    <Input
+                      id="start-date"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-48"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="end-date">To Date (optional)</Label>
+                    <Input
+                      id="end-date"
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-48"
+                    />
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setStartDate(today)
+                      setEndDate(today)
+                    }}
+                    className="mt-6"
+                  >
+                    Today
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setStartDate("")
+                      setEndDate("")
+                    }}
+                    className="mt-6"
+                  >
+                    Clear Dates
+                  </Button>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <strong>Showing: </strong>{getDateRangeDescription()}
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -706,7 +772,7 @@ export function DayCashbook() {
                 Shop#507/B(5th Floor) Sector-7 Road No-3,North Tower Uttara,Dhaka - 1230,Bangladesh-868/955.0
               </div>
               <div className="text-sm">
-                PERIOD : {new Date(cashbookData.startDate).toLocaleDateString('en-GB')}----{new Date(cashbookData.endDate).toLocaleDateString('en-GB')}
+                {getDateRangeDescription()}
               </div>
               <div className="inline-block border-2 border-black rounded-full px-6 py-1 font-bold">
                 CASH BOOK

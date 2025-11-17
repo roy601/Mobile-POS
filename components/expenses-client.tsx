@@ -29,9 +29,14 @@ type ExpenseEntry = {
   updated_at?: string
 }
 
-// Updated categories to match your simplified database schema
+type Supplier = {
+  id: string
+  name: string
+}
+
+// Updated categories with "Supplier Payment" instead of "Party Payment"
 const expenseCategories = [
-  { value: "party_payment", label: "Party Payment" },
+  { value: "party_payment", label: "Supplier Payment" },
   { value: "salaries", label: "Salaries" },
   { value: "printer_papers", label: "Printer Papers" },
   { value: "water_bill", label: "Water Bill" },
@@ -66,6 +71,11 @@ export function ExpensesClient() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
+  // Suppliers state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [selectedSupplier, setSelectedSupplier] = useState("")
+  const [suppliersLoading, setSuppliersLoading] = useState(false)
+  
   // Search filters
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
@@ -82,7 +92,45 @@ export function ExpensesClient() {
     notes: ""
   })
 
+  // Load suppliers from database - FIXED to handle RLS properly
+  const loadSuppliers = async () => {
+    setSuppliersLoading(true)
+    try {
+      // First check if user is authenticated
+      const { data: userData, error: userError } = await supabase.auth.getUser()
+      
+      if (userError || !userData?.user) {
+        console.warn("User not authenticated, suppliers may be limited by RLS")
+      }
+
+      // Try to fetch suppliers
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id, name")
+        .order("name", { ascending: true })
+
+      if (error) {
+        console.error("Error loading suppliers:", error)
+        // Don't throw, just log and continue with empty array
+        setSuppliers([])
+        return
+      }
+
+      console.log(`Loaded ${data?.length || 0} suppliers:`, data)
+      setSuppliers(data || [])
+      
+    } catch (err: any) {
+      console.error("Failed to load suppliers:", err)
+      setSuppliers([])
+    } finally {
+      setSuppliersLoading(false)
+    }
+  }
+
   useEffect(() => {
+    // Load suppliers on mount
+    loadSuppliers()
+    
     // Load today's expenses by default
     const today = new Date().toISOString().split('T')[0]
     setStartDate(today)
@@ -185,7 +233,26 @@ export function ExpensesClient() {
       let finalCategory = newExpense.category
       let customCategory = null
 
-      if (newExpense.category === "other") {
+      // Special handling for party_payment (supplier payment)
+      if (newExpense.category === "party_payment") {
+        if (!selectedSupplier) {
+          alert("Please select a supplier for supplier payment")
+          return
+        }
+        
+        // Find supplier name from suppliers list
+        const supplier = suppliers.find(s => s.id === selectedSupplier)
+        if (!supplier) {
+          alert("Selected supplier not found")
+          return
+        }
+        
+        // Set description to include supplier name
+        if (!newExpense.description.trim()) {
+          // If no description provided, use supplier payment as description
+          newExpense.description = `Payment to ${supplier.name}`
+        }
+      } else if (newExpense.category === "other") {
         if (!newExpense.customCategory.trim()) {
           alert("Please enter a custom category when selecting 'other'")
           return
@@ -277,6 +344,7 @@ export function ExpensesClient() {
         payment_method: "",
         notes: ""
       })
+      setSelectedSupplier("") // Reset supplier selection
       
       console.log("Expense added successfully:", data)
       alert("Expense added successfully!")
@@ -334,6 +402,13 @@ export function ExpensesClient() {
       ? formatDate(startDate)
       : `${formatDate(startDate)} --- ${formatDate(endDate)}`
 
+    // Helper function to get display category
+    const getDisplayCategory = (expense: ExpenseEntry) => {
+      if (expense.category === 'party_payment') return 'Supplier Payment'
+      if (expense.category === 'other') return expense.custom_category || 'Other'
+      return expense.category
+    }
+
     return `
       <!DOCTYPE html>
       <html>
@@ -341,7 +416,7 @@ export function ExpensesClient() {
         <title>Expense Report</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; }
-          .header { text-center; margin-bottom: 30px; }
+          .header { text-align: center; margin-bottom: 30px; }
           .company-name { font-size: 24px; font-weight: bold; margin-bottom: 8px; }
           .address { font-size: 12px; margin-bottom: 8px; }
           .period { font-size: 12px; margin-bottom: 20px; }
@@ -417,7 +492,7 @@ export function ExpensesClient() {
             ${expenses.map(expense => `
               <tr>
                 <td>${formatDate(expense.date)}</td>
-                <td>${expense.category === 'other' ? expense.custom_category || 'Other' : expense.category}</td>
+                <td>${getDisplayCategory(expense)}</td>
                 <td>${expense.payment_method}</td>
                 <td>${expense.description}</td>
                 <td class="amount-cell">৳${expense.amount.toFixed(2)}</td>
@@ -440,6 +515,13 @@ export function ExpensesClient() {
   }
 
   const totalAmount = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0)
+
+  // Helper function to get display category
+  const getDisplayCategory = (expense: ExpenseEntry) => {
+    if (expense.category === 'party_payment') return 'Supplier Payment'
+    if (expense.category === 'other') return expense.custom_category || 'Other'
+    return expense.category
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
@@ -525,7 +607,13 @@ export function ExpensesClient() {
                 <Label htmlFor="category">Category*</Label>
                 <Select 
                   value={newExpense.category} 
-                  onValueChange={(value) => setNewExpense({...newExpense, category: value})}
+                  onValueChange={(value) => {
+                    setNewExpense({...newExpense, category: value})
+                    // Reset supplier selection when changing category
+                    if (value !== "party_payment") {
+                      setSelectedSupplier("")
+                    }
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
@@ -539,6 +627,40 @@ export function ExpensesClient() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Show supplier dropdown when party_payment is selected */}
+              {newExpense.category === "party_payment" && (
+                <div>
+                  <Label htmlFor="supplier">Select Supplier*</Label>
+                  <Select 
+                    value={selectedSupplier} 
+                    onValueChange={setSelectedSupplier}
+                    disabled={suppliersLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={suppliersLoading ? "Loading suppliers..." : "Select supplier"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.length === 0 ? (
+                        <SelectItem value="none" disabled>
+                          {suppliersLoading ? "Loading..." : "No suppliers found - Add suppliers in Products page"}
+                        </SelectItem>
+                      ) : (
+                        suppliers.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {suppliers.length === 0 && !suppliersLoading && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Add suppliers in the Products → Add Product page
+                    </p>
+                  )}
+                </div>
+              )}
 
               {newExpense.category === "other" && (
                 <div>
@@ -593,9 +715,9 @@ export function ExpensesClient() {
                 id="description"
                 value={newExpense.description}
                 onChange={(e) => setNewExpense({...newExpense, description: e.target.value})}
-                placeholder="Enter expense description"
+                placeholder={newExpense.category === "party_payment" ? "Enter payment details (optional - will auto-fill with supplier name)" : "Enter expense description"}
                 rows={3}
-                required
+                required={newExpense.category !== "party_payment"}
               />
             </div>
 
@@ -652,10 +774,7 @@ export function ExpensesClient() {
                     <TableRow key={expense.id}>
                       <TableCell>{expense.date}</TableCell>
                       <TableCell>
-                        {expense.category === 'other' 
-                          ? expense.custom_category || 'Other'
-                          : expense.category
-                        }
+                        {getDisplayCategory(expense)}
                       </TableCell>
                       <TableCell>{expense.payment_method}</TableCell>
                       <TableCell>{expense.description}</TableCell>
