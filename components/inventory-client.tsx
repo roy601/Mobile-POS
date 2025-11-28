@@ -61,10 +61,9 @@ export function InventoryClient() {
     console.warn("Role provider not available, using default permissions")
   }
 
-  // Date filtering
+  // Date filtering - single date for point-in-time inventory view
   const today = new Date().toISOString().split('T')[0]
-  const [startDate, setStartDate] = useState<string>("")
-  const [endDate, setEndDate] = useState<string>("")
+  const [filterDate, setFilterDate] = useState<string>("")
   const [dateFilterEnabled, setDateFilterEnabled] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState("")
@@ -206,44 +205,31 @@ export function InventoryClient() {
     }
   }, [toast])
 
-  // UPDATED: Apply flexible date filter to rows
+  // UPDATED: Apply single date filter - show all inventory up to and including selected date
   const dateFilteredRows = useMemo(() => {
     // If date filter is not enabled, show all rows
     if (!dateFilterEnabled) {
       return rows
     }
 
-    // If no dates are selected, show all rows
-    if (!startDate && !endDate) {
+    // If no date is selected, show all rows
+    if (!filterDate) {
       return rows
     }
 
+    // Show all inventory purchased up to and including the selected date
     return rows.filter((r) => {
       if (!r.purchase_date) return false
       const purchaseDate = new Date(r.purchase_date).toISOString().split('T')[0]
-      
-      // If only "To Date" is set, show all up to that date (from beginning to endDate)
-      if (!startDate && endDate) {
-        return purchaseDate <= endDate
-      }
-      
-      // If only "From Date" is set, show all from that date onwards (from startDate to now)
-      if (startDate && !endDate) {
-        return purchaseDate >= startDate
-      }
-      
-      // If both dates are set, show within range
-      return purchaseDate >= startDate && purchaseDate <= endDate
+      return purchaseDate <= filterDate
     })
-  }, [rows, dateFilterEnabled, startDate, endDate])
+  }, [rows, dateFilterEnabled, filterDate])
 
-  // Get the date range description
-  const getDateRangeDescription = () => {
+  // Get the date description
+  const getDateDescription = () => {
     if (!dateFilterEnabled) return null
-    if (!startDate && !endDate) return "All dates"
-    if (!startDate && endDate) return `All inventory up to ${new Date(endDate).toLocaleDateString('en-GB')}`
-    if (startDate && !endDate) return `All inventory from ${new Date(startDate).toLocaleDateString('en-GB')} onwards`
-    return `${new Date(startDate).toLocaleDateString('en-GB')} to ${new Date(endDate).toLocaleDateString('en-GB')}`
+    if (!filterDate) return "All dates"
+    return `All inventory as of ${new Date(filterDate).toLocaleDateString('en-GB')}`
   }
 
   // FIXED: Better grouping logic with validation
@@ -377,12 +363,12 @@ export function InventoryClient() {
     })
   }
 
-  // Print inventory report - UPDATED with flexible date range text
+  // Print inventory report - UPDATED with single date description
   const handlePrintInventory = () => {
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
-    const dateRangeText = getDateRangeDescription() || 'All Time Inventory'
+    const dateText = getDateDescription() || 'All Time Inventory'
 
     const content = `
       <!DOCTYPE html>
@@ -417,7 +403,7 @@ export function InventoryClient() {
         <div class="header">
           <div class="company-name">STAR POWER</div>
           <div class="title">Inventory Report</div>
-          <div class="period">${dateRangeText}</div>
+          <div class="period">${dateText}</div>
         </div>
 
         <div class="summary">
@@ -501,18 +487,12 @@ export function InventoryClient() {
     printWindow.print()
   }
 
-  // Export CSV - UPDATED with flexible date range in filename
+  // Export CSV - UPDATED with single date in filename
   const handleExportCSV = () => {
     try {
-      let dateRangeText = 'all_time'
-      if (dateFilterEnabled) {
-        if (!startDate && endDate) {
-          dateRangeText = `upto_${endDate}`
-        } else if (startDate && !endDate) {
-          dateRangeText = `from_${startDate}`
-        } else if (startDate && endDate) {
-          dateRangeText = `${startDate}_to_${endDate}`
-        }
+      let dateText = 'all_time'
+      if (dateFilterEnabled && filterDate) {
+        dateText = `as_of_${filterDate}`
       }
 
       const rows = filteredProducts.map((p) => {
@@ -537,7 +517,7 @@ export function InventoryClient() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `inventory-${dateRangeText}-${new Date().toISOString().slice(0,10)}.csv`
+      a.download = `inventory-${dateText}-${new Date().toISOString().slice(0,10)}.csv`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -623,15 +603,15 @@ export function InventoryClient() {
         </div>
       </div>
 
-      {/* Date Range Filter Card - UPDATED with better descriptions */}
+      {/* Date Filter Card - UPDATED to single date for point-in-time view */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            Date Range Filter
+            Point-in-Time Inventory View
           </CardTitle>
           <CardDescription>
-            Filter inventory by purchase date period (optional - leave dates empty to show all)
+            View inventory as it existed on a specific date (shows all stock from beginning up to selected date)
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -652,34 +632,20 @@ export function InventoryClient() {
             {dateFilterEnabled && (
               <>
                 <div>
-                  <Label htmlFor="start-date" className="text-xs">From Date (optional)</Label>
+                  <Label htmlFor="filter-date" className="text-xs">As of Date</Label>
                   <Input
-                    id="start-date"
+                    id="filter-date"
                     type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
                     className="w-48"
-                    placeholder="Leave empty for all"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="end-date" className="text-xs">To Date (optional)</Label>
-                  <Input
-                    id="end-date"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-48"
-                    placeholder="Leave empty for all"
+                    placeholder="Select date"
                   />
                 </div>
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => {
-                    setStartDate(today)
-                    setEndDate(today)
-                  }}
+                  onClick={() => setFilterDate(today)}
                   className="mt-5"
                 >
                   Today
@@ -687,20 +653,17 @@ export function InventoryClient() {
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => {
-                    setStartDate("")
-                    setEndDate("")
-                  }}
+                  onClick={() => setFilterDate("")}
                   className="mt-5"
                 >
-                  Clear Dates
+                  Clear Date
                 </Button>
               </>
             )}
           </div>
           {dateFilterEnabled && (
             <div className="mt-3 text-sm text-muted-foreground">
-              <strong>Showing: </strong>{getDateRangeDescription()}
+              <strong>Showing: </strong>{getDateDescription()}
             </div>
           )}
         </CardContent>
@@ -814,7 +777,7 @@ export function InventoryClient() {
         <CardHeader>
           <CardTitle>Products</CardTitle>
           <CardDescription>
-            {`${filteredProducts.length} of ${products.length} grouped products ${dateFilterEnabled ? `(date filtered)` : ''}`}
+            {`${filteredProducts.length} of ${products.length} grouped products ${dateFilterEnabled && filterDate ? `(as of ${new Date(filterDate).toLocaleDateString('en-GB')})` : ''}`}
           </CardDescription>
         </CardHeader>
         <CardContent>

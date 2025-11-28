@@ -140,7 +140,7 @@ export default function SalesPageClient() {
   // expanded rows
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
-  // FIXED: Better data loading with product details and total_discount
+  // FIXED: Better data loading with product details and total_discount, excluding draft sales
   async function loadSales() {
     setLoading(true)
     setError(null)
@@ -180,6 +180,7 @@ export default function SalesPageClient() {
             category
           )
         `)
+        .neq('status', 'draft')
         .order("created_at", { ascending: false })
 
       if (error) {
@@ -729,7 +730,7 @@ export default function SalesPageClient() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{bdAmount(totalRevenue)}</div>
-            <p className="text-xs text-muted-foreground">From all sales (including pending)</p>
+            <p className="text-xs text-muted-foreground">From all sales (excluding drafts)</p>
           </CardContent>
         </Card>
 
@@ -771,7 +772,7 @@ export default function SalesPageClient() {
               ? `Error: ${error}`
               : startDate || endDate || query || brandFilter !== "all" || categoryFilter !== "all"
                 ? `Filtered sales transactions (${filteredSales.length} results) - Click rows to see product details`
-                : "Complete list of all sales transactions - Click rows to see product details"
+                : "Complete list of all sales transactions (excluding drafts) - Click rows to see product details"
             }
           </CardDescription>
         </CardHeader>

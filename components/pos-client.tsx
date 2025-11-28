@@ -26,7 +26,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { POSCalculator } from "@/components/pos-calculator";
-import { CustomerSearch } from "@/components/customer-search";
 import { ProductScanner } from "@/components/product-scanner";
 import { useToast } from "@/hooks/use-toast";
 import { createClient } from "@/utils/supabase/component";
@@ -104,7 +103,6 @@ export function POSClient() {
   });
 
   const [showCalculator, setShowCalculator] = useState(false);
-  const [showCustomerSearch, setShowCustomerSearch] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -406,7 +404,7 @@ export function POSClient() {
 
       // Footer
       const footerBanglaLine = esc(
-        "যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।"
+        "যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।"
       );
       const footerContactNote = esc(
         "If you find any issue in this invoice, contact: Cell: 01678-077128"
@@ -583,16 +581,6 @@ export function POSClient() {
   const lookupByBarcode = async (rawBarcode: string) => {
     const barcode = rawBarcode.trim();
     if (!barcode) return;
-
-    if (!saleStarted) {
-      toast({
-        title: "Select customer first",
-        description:
-          "Save/select a customer to start a sale before loading products.",
-        variant: "destructive",
-      });
-      return;
-    }
 
     setIsLoading(true);
     try {
@@ -827,16 +815,80 @@ export function POSClient() {
   };
 
   const addToCart = async () => {
+    // Validate customer information from form fields if not already saved
     if (!customer) {
-      toast({
-        title: "Select customer first",
-        description: "Save/select a customer before adding items.",
-        variant: "destructive",
-      });
-      return;
-    }
-    // Lazy-start sale if needed
-    if (!saleStarted) {
+      const customerName = (
+        document.getElementById("customer-name") as HTMLInputElement
+      )?.value?.trim();
+      const customerPhone = (
+        document.getElementById("customer-phone") as HTMLInputElement
+      )?.value?.trim();
+      const customerEmail = (
+        document.getElementById("customer-email") as HTMLInputElement
+      )?.value?.trim();
+
+      // Validate required fields
+      if (!customerName) {
+        toast({
+          title: "Customer Name Required",
+          description: "Please enter customer name before adding products.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!customerPhone) {
+        toast({
+          title: "Phone Number Required",
+          description: "Please enter customer phone number before adding products.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Save customer first
+      try {
+        const { data, error } = await supabase.rpc("upsert_customer", {
+          p_name: customerName,
+          p_phone: customerPhone,
+          p_email: customerEmail || null,
+        });
+        if (error) throw new Error(error.message || "upsert_customer failed");
+        if (!data?.success || !data?.customer?.id)
+          throw new Error("upsert_customer returned no customer id");
+
+        const savedCustomer: Customer = {
+          id: data.customer.id,
+          name: data.customer.name,
+          phone: data.customer.phone,
+          email: data.customer.email,
+          dues: data.customer.dues ?? 0,
+        };
+        setCustomer(savedCustomer);
+        
+        toast({ 
+          title: "Customer Saved", 
+          description: `${savedCustomer.name} saved. Starting sale...`,
+        });
+
+        // Now start the sale
+        const { saleId, invoiceNumber: inv } = await startSaleForCustomer(
+          savedCustomer as Required<Customer>
+        );
+        toast({
+          title: "Sale Started",
+          description: `Sale #${saleId}${inv ? ` • ${inv}` : ""}`,
+        });
+      } catch (e: any) {
+        toast({
+          title: "Error",
+          description: e?.message ?? "Failed to save customer",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (!saleStarted) {
+      // Customer exists but sale not started - start it now
       try {
         const { saleId, invoiceNumber: inv } = await startSaleForCustomer(
           customer as Required<Customer>
@@ -960,7 +1012,7 @@ export function POSClient() {
     setInvoiceNumber(null);
     toast({
       title: "New Sale",
-      description: "Select or save a customer to begin.",
+      description: "Fill customer info and add products to begin.",
     });
   };
 
@@ -1189,71 +1241,6 @@ export function POSClient() {
     await openPrintableReceipt(currentSaleId);
   };
 
-  // ---- Customer selection / save
-
-  const handleCustomerSelect = (selectedCustomer: Customer) => {
-    if (!selectedCustomer.id) {
-      toast({
-        title: "Missing customer ID",
-        description: "Selected customer must have an ID.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setCustomer(selectedCustomer);
-    setShowCustomerSearch(false);
-    // Do NOT auto-start sale; start on button or when adding first item
-  };
-
-  const saveCustomer = async () => {
-    const customerName = (
-      document.getElementById("customer-name") as HTMLInputElement
-    )?.value;
-    const customerPhone = (
-      document.getElementById("customer-phone") as HTMLInputElement
-    )?.value;
-    const customerEmail = (
-      document.getElementById("customer-email") as HTMLInputElement
-    )?.value;
-
-    if (!customerName) {
-      toast({
-        title: "Error",
-        description: "Customer name is required",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase.rpc("upsert_customer", {
-        p_name: customerName,
-        p_phone: customerPhone || null,
-        p_email: customerPhone || null,
-      });
-      if (error) throw new Error(error.message || "upsert_customer failed");
-      if (!data?.success || !data?.customer?.id)
-        throw new Error("upsert_customer returned no customer id");
-
-      const saved: Customer = {
-        id: data.customer.id,
-        name: data.customer.name,
-        phone: data.customer.phone,
-        email: data.customer.email,
-        dues: data.customer.dues ?? 0,
-      };
-      setCustomer(saved);
-      toast({ title: "Customer Saved", description: `Saved ${saved.name}.` });
-    } catch (e: any) {
-      console.error("Error saving customer:", e);
-      toast({
-        title: "Error saving customer",
-        description: e?.message ?? "Failed",
-        variant: "destructive",
-      });
-    }
-  };
-
   return (
     <div className="flex-1 p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -1289,7 +1276,7 @@ export function POSClient() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {customer ? (
+            {saleStarted && customer ? (
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <div>
@@ -1305,44 +1292,10 @@ export function POSClient() {
                         Previous Dues: ৳{customer.dues.toFixed(2)}
                       </p>
                     )}
-                    {saleStarted ? (
-                      <p className="text-xs text-green-700 mt-1">
-                        Sale started (ID: {currentSaleId})
-                        {invoiceNumber ? ` • Invoice: ${invoiceNumber}` : ""}
-                      </p>
-                    ) : (
-                      <div className="flex items-center gap-2 mt-2">
-                        <p className="text-xs text-amber-700">
-                          No sale started
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              const { saleId, invoiceNumber: inv } =
-                                await startSaleForCustomer(
-                                  customer as Required<Customer>
-                                );
-                              toast({
-                                title: "Sale Started",
-                                description: `Sale #${saleId}${
-                                  inv ? ` • ${inv}` : ""
-                                }`,
-                              });
-                            } catch (e: any) {
-                              toast({
-                                title: "Couldn't start sale",
-                                description: e?.message ?? "start_sale failed",
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                        >
-                          Start Sale
-                        </Button>
-                      </div>
-                    )}
+                    <p className="text-xs text-green-700 mt-1">
+                      Sale started (ID: {currentSaleId})
+                      {invoiceNumber ? ` • Invoice: ${invoiceNumber}` : ""}
+                    </p>
                   </div>
                   <Button
                     variant="outline"
@@ -1351,6 +1304,7 @@ export function POSClient() {
                       setCustomer(null);
                       setCurrentSaleId(null);
                       setInvoiceNumber(null);
+                      clearCart();
                     }}
                   >
                     Clear
@@ -1360,11 +1314,11 @@ export function POSClient() {
             ) : (
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="customer-name">Customer Name</Label>
+                  <Label htmlFor="customer-name">Customer Name *</Label>
                   <Input id="customer-name" placeholder="Enter customer name" />
                 </div>
                 <div>
-                  <Label htmlFor="customer-phone">Phone Number</Label>
+                  <Label htmlFor="customer-phone">Phone Number *</Label>
                   <Input id="customer-phone" placeholder="Enter phone number" />
                 </div>
                 <div>
@@ -1372,23 +1326,11 @@ export function POSClient() {
                   <Input
                     id="customer-email"
                     type="email"
-                    placeholder="Enter email address"
+                    placeholder="Enter email address (optional)"
                   />
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1 bg-transparent"
-                    onClick={saveCustomer}
-                  >
-                    Save Customer
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowCustomerSearch(true)}
-                  >
-                    Search
-                  </Button>
+                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-blue-800 text-sm">
+                  💡 Fill customer info, then add products to cart to start sale
                 </div>
               </div>
             )}
@@ -1401,13 +1343,6 @@ export function POSClient() {
             <CardTitle>Product Entry</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!saleStarted && (
-              <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-amber-800 text-sm">
-                Select or save a customer to start a sale before adding
-                products.
-              </div>
-            )}
-
             <div className="flex gap-2">
               <div className="flex-1">
                 <Label htmlFor="barcode">Barcode</Label>
@@ -1416,23 +1351,21 @@ export function POSClient() {
                   placeholder="Scan or enter barcode"
                   value={productForm.barcode}
                   onChange={(e) => handleBarcodeInput(e.target.value)}
-                  disabled={isLoading || !saleStarted}
+                  disabled={isLoading}
                 />
               </div>
               <div className="flex items-end gap-2">
                 <Button
                   variant="outline"
                   onClick={() => lookupByBarcode(productForm.barcode)}
-                  disabled={
-                    isLoading || !saleStarted || !productForm.barcode.trim()
-                  }
+                  disabled={isLoading || !productForm.barcode.trim()}
                 >
                   Load
                 </Button>
                 <Button
                   size="icon"
                   onClick={() => setShowScanner(true)}
-                  disabled={isLoading || !saleStarted}
+                  disabled={isLoading}
                 >
                   <QrCode className="h-4 w-4" />
                 </Button>
@@ -1451,7 +1384,7 @@ export function POSClient() {
               <Label htmlFor="product-name">Product Name</Label>
               <Input
                 id="product-name"
-                placeholder="Auto-filled from barcode"
+                placeholder="Auto-filled from barcode or enter manually"
                 value={productForm.name}
                 onChange={(e) =>
                   setProductForm({ ...productForm, name: e.target.value })
@@ -1459,7 +1392,6 @@ export function POSClient() {
                 className={
                   productForm.barcode && productForm.name ? "bg-green-50" : ""
                 }
-                disabled={!saleStarted}
               />
             </div>
 
@@ -1468,7 +1400,7 @@ export function POSClient() {
                 <Label htmlFor="color">Color</Label>
                 <Input
                   id="color"
-                  placeholder="Auto-filled from barcode"
+                  placeholder="Auto-filled or manual"
                   value={productForm.color}
                   onChange={(e) =>
                     setProductForm({ ...productForm, color: e.target.value })
@@ -1478,7 +1410,6 @@ export function POSClient() {
                       ? "bg-green-50"
                       : ""
                   }
-                  disabled={!saleStarted}
                 />
               </div>
               <div>
@@ -1494,7 +1425,6 @@ export function POSClient() {
                         quantity: Math.max(1, productForm.quantity - 1),
                       })
                     }
-                    disabled={!saleStarted}
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
@@ -1510,7 +1440,6 @@ export function POSClient() {
                         ),
                       })
                     }
-                    disabled={!saleStarted}
                   />
                   <Button
                     variant="outline"
@@ -1522,7 +1451,6 @@ export function POSClient() {
                         quantity: productForm.quantity + 1,
                       })
                     }
-                    disabled={!saleStarted}
                   >
                     <Plus className="h-4 w-4" />
                   </Button>
@@ -1536,7 +1464,7 @@ export function POSClient() {
                 <Input
                   id="sale-price"
                   type="number"
-                  placeholder="Auto-filled from barcode"
+                  placeholder="Auto-filled or manual"
                   value={productForm.price}
                   onChange={(e) =>
                     setProductForm({
@@ -1549,7 +1477,6 @@ export function POSClient() {
                       ? "bg-green-50"
                       : ""
                   }
-                  disabled={!saleStarted}
                 />
               </div>
               <div>
@@ -1565,12 +1492,11 @@ export function POSClient() {
                       discount: Number.parseFloat(e.target.value) || 0,
                     })
                   }
-                  disabled={!saleStarted}
                 />
               </div>
             </div>
 
-            {productForm.barcode && saleStarted && (
+            {productForm.barcode && (
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-800 font-medium">
                   ✓ Product loaded from inventory
@@ -1585,7 +1511,7 @@ export function POSClient() {
             <Button
               className="w-full bg-green-600 hover:bg-green-700"
               onClick={addToCart}
-              disabled={isLoading || !saleStarted}
+              disabled={isLoading}
             >
               Add to Cart
             </Button>
@@ -1605,6 +1531,13 @@ export function POSClient() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Helpful note when no customer and no cart items */}
+            {!saleStarted && cartItems.length === 0 && (
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-blue-800 text-sm">
+                💡 Fill customer info and enter product details, then click "Add to Cart" to begin
+              </div>
+            )}
+
             {/* Cart Items */}
             <div className="border rounded-lg p-3 max-h-48 overflow-y-auto">
               <div className="space-y-2">
@@ -1620,7 +1553,7 @@ export function POSClient() {
                         </p>
                         <p className="text-muted-foreground">
                           ৳{item.price.toFixed(2)} × {item.quantity}
-                          {item.discount > 0 && ` (-${item.discount}%)`}
+                          {item.discount > 0 && ` (-৳${item.discount})`}
                         </p>
                         {item.barcode && (
                           <p className="text-xs text-muted-foreground">
@@ -1641,7 +1574,6 @@ export function POSClient() {
                           onClick={() =>
                             updateQuantity(item.id, item.quantity - 1)
                           }
-                          disabled={!saleStarted}
                         >
                           <Minus className="h-3 w-3" />
                         </Button>
@@ -1653,7 +1585,6 @@ export function POSClient() {
                           onClick={() =>
                             updateQuantity(item.id, item.quantity + 1)
                           }
-                          disabled={!saleStarted}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -1662,7 +1593,6 @@ export function POSClient() {
                           size="icon"
                           className="h-6 w-6 text-red-500"
                           onClick={() => removeFromCart(item.id)}
-                          disabled={!saleStarted}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -1779,10 +1709,9 @@ export function POSClient() {
                   </SelectTrigger>
                   <SelectContent>
                     {bankAccounts.map((bank) => (
-                      <SelectItem
-                        key={bank.id}
-                        value={bank.bankName}
-                      ></SelectItem>
+                      <SelectItem key={bank.id} value={bank.bankName}>
+                        {bank.bankName}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -2120,7 +2049,7 @@ export function POSClient() {
           <CardTitle>Quick Actions</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <Button
               variant="outline"
               className="h-16 bg-transparent"
@@ -2145,16 +2074,6 @@ export function POSClient() {
             <Button
               variant="outline"
               className="h-16 bg-transparent"
-              onClick={() => setShowCustomerSearch(true)}
-            >
-              <div className="text-center">
-                <User className="h-6 w-6 mx-auto mb-1" />
-                <span className="text-sm">Customer List</span>
-              </div>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-16 bg-transparent"
               onClick={() => setShowScanner(true)}
             >
               <div className="text-center">
@@ -2168,12 +2087,6 @@ export function POSClient() {
 
       {/* Dialogs */}
       <POSCalculator open={showCalculator} onOpenChange={setShowCalculator} />
-      <CustomerSearch
-        open={showCustomerSearch}
-        onOpenChange={setShowCustomerSearch}
-        onSelectCustomer={handleCustomerSelect}
-        supabase={supabase}
-      />
       <ProductScanner
         open={showScanner}
         onOpenChange={setShowScanner}
