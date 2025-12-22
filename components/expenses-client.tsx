@@ -74,6 +74,17 @@ export function ExpensesClient() {
   // Suppliers state
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [selectedSupplier, setSelectedSupplier] = useState("")
+  useEffect(() => {
+  if (newExpense.category === 'party_payment' && selectedSupplier) {
+    const supplier = suppliers.find(s => s.id === selectedSupplier)
+    if (supplier) {
+      setNewExpense(prev => ({
+        ...prev,
+        description: `${supplier.name}`
+      }))
+    }
+  }
+}, [selectedSupplier, suppliers])
   const [suppliersLoading, setSuppliersLoading] = useState(false)
   
   // Search filters
@@ -287,7 +298,8 @@ export function ExpensesClient() {
         description: newExpense.description.trim(),
         amount: newExpense.amount,
         payment_method: newExpense.payment_method,
-        notes: newExpense.notes || null
+        notes: newExpense.notes || null,
+        supplier_id: newExpense.category === 'party_payment' ? selectedSupplier : null
         // No user_id or organization_id - these have been removed
       }
 

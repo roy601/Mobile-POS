@@ -1779,8 +1779,10 @@ export function POSClient() {
                   </SelectTrigger>
                   <SelectContent>
                     {bankAccounts.map((bank) => (
-                      <SelectItem key={bank.id} value={bank.bankName}>
-                      </SelectItem>
+                      <SelectItem
+                        key={bank.id}
+                        value={bank.bankName}
+                      ></SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
