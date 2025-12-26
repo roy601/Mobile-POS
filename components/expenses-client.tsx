@@ -275,8 +275,8 @@ export function ExpensesClient() {
         return
       }
 
-      if (!newExpense.description.trim()) {
-        alert("Please enter a description")
+      if (newExpense.category === 'party_payment' && !newExpense.description.trim()) {
+        alert("Description is required for supplier payments")
         return
       }
 
@@ -722,14 +722,17 @@ export function ExpensesClient() {
             </div>
 
             <div className="mt-4">
-              <Label htmlFor="description">Description*</Label>
+              <Label htmlFor="description">
+                Description
+                {newExpense.category === 'party_payment' ? '*' : ' (Optional)'}
+              </Label>
               <Textarea
                 id="description"
                 value={newExpense.description}
                 onChange={(e) => setNewExpense({...newExpense, description: e.target.value})}
                 placeholder={newExpense.category === "party_payment" ? "Enter payment details (optional - will auto-fill with supplier name)" : "Enter expense description"}
                 rows={3}
-                required={newExpense.category !== "party_payment"}
+                required={newExpense.category === "party_payment"}
               />
             </div>
 
