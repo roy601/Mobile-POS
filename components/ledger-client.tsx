@@ -108,9 +108,10 @@ export function LedgerClient() {
       prevDate.setDate(prevDate.getDate() - 1)
       const previousDate = prevDate.toISOString().split('T')[0]
 
-      const [salesResult, purchaseResult, returnsResult, expensesData, incomeData, openingBalance] = await Promise.all([
+      // ✅ UPDATED: Removed getPurchaseData from Promise.all
+      const [salesResult, returnsResult, expensesData, incomeData, openingBalance] = await Promise.all([
         getSalesData(start, end),
-        getPurchaseData(start, end),
+        // ❌ REMOVED: getPurchaseData(start, end)
         getReturnsData(start, end),
         getExpensesData(start, end),
         getIncomeData(start, end),
@@ -158,7 +159,7 @@ export function LedgerClient() {
         })
       }
 
-      // 2b. UPDATED: Bank/Digital Payments (CREDIT - Money OUT to bank)
+      // 2b. Bank/Digital Payments (CREDIT - Money OUT to bank)
       if (salesResult.individualSales && salesResult.individualSales.length > 0) {
         salesResult.individualSales.forEach((sale: any) => {
           if (sale.bankAmount > 0) {
@@ -193,69 +194,29 @@ export function LedgerClient() {
       }
 
       // 4. Individual Income entries (DEBIT - Money IN)
-      if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
-        incomeData.individualIncomes.forEach((income: any, idx: number) => {
-          balance += income.amount
-          const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'
-          const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
-          
-          generalLedger.push({
-            id: `income-${idx}`,
-            date: income.created_at,
-            description: `${incomeTypeLabel} (${destinationLabel})${income.description ? ' - ' + income.description : ''}`,
-            voucherType: 'Income',
-            debit: income.amount,
-            credit: 0,
-            balance: balance
+      // ✅ UPDATED: Changed "Party Income" to "Supplier Income"
+        if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
+          incomeData.individualIncomes.forEach((income: any, idx: number) => {
+            balance += income.amount
+            const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income'
+            const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
+            
+            generalLedger.push({
+              id: `income-${idx}`,
+              date: income.created_at,
+              description: `${incomeTypeLabel} (${destinationLabel})${income.description ? ' - ' + income.description : ''}`,
+              voucherType: 'Income',
+              debit: income.amount,
+              credit: 0,
+              balance: balance,
+              supplier: income.supplier_name || undefined
+            })
           })
-        })
-      }
+        }
 
-      // 4b. Supplier Payments (DEBIT - Reducing Liability)
-      if (expensesData.supplierPayments && expensesData.supplierPayments.length > 0) {
-        expensesData.supplierPayments.forEach((payment: any, idx: number) => {
-          balance += payment.amount
-          
-          // Debug log to verify extraction
-          if (payment.supplier) {
-            console.log(`✓ General Ledger - Supplier payment #${idx}: Supplier name:`, payment.supplier)
-          } else {
-            console.warn(`⚠ General Ledger - Supplier payment #${idx}: No supplier name. Description:`, payment.description)
-          }
-          
-          generalLedger.push({
-            id: `supplier-payment-${idx}`,
-            date: payment.created_at,
-            description: payment.description || 'Supplier Payment',
-            voucherType: 'Supplier Payment',
-            debit: payment.amount,
-            credit: 0,
-            balance: balance,
-            supplier: payment.supplier || undefined,
-            reference: `PAY-${payment.id}`
-          })
-        })
-      }
+      // ❌ REMOVED: Individual Purchases - no longer tracked in ledger
 
-      // 5. Individual Purchases (CREDIT - Money OUT)
-      if (purchaseResult.purchases && purchaseResult.purchases.length > 0) {
-        purchaseResult.purchases.forEach((purchase: any) => {
-          balance -= purchase.amount
-          generalLedger.push({
-            id: `purchase-${purchase.id}`,
-            date: purchase.date,
-            description: `Purchase from ${purchase.supplier || 'Supplier'} - ৳${purchase.amount.toFixed(2)}`,
-            voucherType: 'Purchase',
-            debit: 0,
-            credit: purchase.amount,
-            balance: balance,
-            supplier: purchase.supplier,
-            reference: `PUR-${purchase.id}`
-          })
-        })
-      }
-
-      // 6. Sales Returns (CREDIT - Money OUT)
+      // 5. Sales Returns (CREDIT - Money OUT)
       if (returnsResult.salesReturns > 0) {
         balance -= returnsResult.salesReturns
         generalLedger.push({
@@ -269,7 +230,7 @@ export function LedgerClient() {
         })
       }
 
-      // 7. Individual Expenses (CREDIT - Money OUT) - EXCLUDING supplier payments
+      // 6. Individual Expenses (CREDIT - Money OUT) - EXCLUDING supplier payments
       if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
         expensesData.individualExpenses
           .filter((expense: any) => expense.category !== 'party_payment') // Exclude supplier payments
@@ -288,6 +249,25 @@ export function LedgerClient() {
               supplier: expense.supplier || undefined
             })
           })
+      }
+
+      // 7. ✅ UPDATED: Supplier Payments (CREDIT - Money OUT)
+      if (expensesData.supplierPayments && expensesData.supplierPayments.length > 0) {
+        expensesData.supplierPayments.forEach((payment: any, idx: number) => {
+          balance -= payment.amount  // ✅ CHANGED: reduces balance
+          
+          generalLedger.push({
+            id: `supplier-payment-${idx}`,
+            date: payment.created_at,
+            description: payment.description || 'Supplier Payment',
+            voucherType: 'Supplier Payment',
+            debit: 0,                  // ✅ CHANGED
+            credit: payment.amount,    // ✅ CHANGED
+            balance: balance,
+            supplier: payment.supplier || undefined,
+            reference: `PAY-${payment.id}`
+          })
+        })
       }
 
       // Sort General Ledger by date
@@ -325,45 +305,22 @@ export function LedgerClient() {
         balance: purchaseBalance
       })
 
-      // Individual Purchases (CREDIT - increases payable)
-      if (purchaseResult.purchases && purchaseResult.purchases.length > 0) {
-        purchaseResult.purchases.forEach((purchase: any) => {
-          purchaseBalance -= purchase.amount
-          purchaseLedger.push({
-            id: `purchase-${purchase.id}`,
-            date: purchase.date,
-            description: `Purchase from ${purchase.supplier || 'Supplier'}`,
-            voucherType: 'Purchase',
-            debit: 0,
-            credit: purchase.amount,
-            balance: purchaseBalance,
-            supplier: purchase.supplier,
-            reference: `PUR-${purchase.id}`
-          })
-        })
-      }
+      // ❌ REMOVED: Individual Purchases - no longer tracked
 
-      // Supplier Payments from Expenses (DEBIT - reduces payable)
+      // ✅ UPDATED: Supplier Payments (CREDIT - cash going out)
       if (expensesData.supplierPayments && expensesData.supplierPayments.length > 0) {
         expensesData.supplierPayments.forEach((payment: any, idx: number) => {
-          purchaseBalance += payment.amount
-          
-          // Debug log to verify extraction
-          if (payment.supplier) {
-            console.log(`✓ Supplier payment #${idx}: Extracted supplier name:`, payment.supplier)
-          } else {
-            console.warn(`⚠ Supplier payment #${idx}: No supplier name extracted from description:`, payment.description)
-          }
+          purchaseBalance -= payment.amount  // ✅ CHANGED: reduces balance
           
           purchaseLedger.push({
             id: `supplier-payment-${idx}`,
             date: payment.created_at,
             description: payment.description || 'Supplier Payment',
             voucherType: 'Supplier Payment',
-            debit: payment.amount,
-            credit: 0,
+            debit: 0,                  // ✅ CHANGED
+            credit: payment.amount,    // ✅ CHANGED
             balance: purchaseBalance,
-            supplier: payment.supplier || undefined, // Add supplier name if available
+            supplier: payment.supplier || undefined,
             reference: `PAY-${payment.id}`
           })
         })
@@ -465,9 +422,9 @@ export function LedgerClient() {
       setSalesEntries(salesLedger.sort(sortByDate))
       setGeneralEntries(generalLedger)
 
-      // Calculate Balance Sheet Data
+      // ✅ UPDATED: Calculate Balance Sheet Data (purchases = 0)
       const bsData: BalanceSheetData = {
-        totalPurchaseAmount: purchaseResult.totalAmount,
+        totalPurchaseAmount: 0,  // ✅ CHANGED: purchases no longer tracked
         totalSalesAmount: salesResult.totalSalesAmount,
         totalPartyPaymentAmount: expensesData.partyPaymentAmount,
         totalOwnExpenseAmount: expensesData.totalAmount - expensesData.partyPaymentAmount,
@@ -489,7 +446,7 @@ export function LedgerClient() {
     }
   }
 
-  // Data fetching functions (matching day-cashbook.tsx exactly)
+  // Data fetching functions
   const getSalesData = async (start: string, end: string) => {
     try {
       const { data, error } = await supabase
@@ -558,45 +515,6 @@ export function LedgerClient() {
         cashAmount: 0, 
         bankAmount: 0,
         individualSales: []
-      }
-    }
-  }
-
-  const getPurchaseData = async (start: string, end: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("purchases")
-        .select(`id, created_at, supplier, cost_price, color_variants(purchase_id)`)
-        .gte("created_at", start)
-        .lte("created_at", `${end}T23:59:59.999Z`)
-        .order("created_at", { ascending: true })
-
-      if (error) throw error
-      
-      const purchases = (data || []).map(purchase => {
-        const numVariants = purchase.color_variants?.length ?? 0
-        const costPrice = purchase.cost_price ?? 0
-        const amount = costPrice * numVariants
-        
-        return {
-          id: purchase.id,
-          date: purchase.created_at,
-          supplier: purchase.supplier,
-          amount: amount
-        }
-      })
-
-      const totalAmount = purchases.reduce((sum, p) => sum + p.amount, 0)
-      
-      return { 
-        purchases,
-        totalAmount
-      }
-    } catch (error) {
-      console.error("getPurchaseData error:", error)
-      return { 
-        purchases: [],
-        totalAmount: 0
       }
     }
   }
@@ -729,60 +647,75 @@ export function LedgerClient() {
     }
   }
 
-  const getIncomeData = async (start: string, end: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("income_owner")
-        .select("id, amount, income_type, destination_type, description, created_at")
-        .gte("date", start)
-        .lte("date", end)
-        .order("created_at", { ascending: true })
+const getIncomeData = async (start: string, end: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("income_owner")
+      .select(`
+        id, 
+        amount, 
+        income_type, 
+        destination_type, 
+        description, 
+        created_at,
+        supplier_id,
+        suppliers (
+          id,
+          name
+        )
+      `)
+      .gte("date", start)
+      .lte("date", end)
+      .order("created_at", { ascending: true })
 
-      if (error) throw error
+    if (error) throw error
 
-      const individualIncomes = (data || []).map(income => ({
-        id: income.id,
-        amount: income.amount || 0,
-        income_type: income.income_type || 'owner_income',
-        destination_type: income.destination_type || 'cash',
-        description: income.description || '',
-        created_at: income.created_at
-      }))
+    const individualIncomes = (data || []).map((income: any) => ({
+      id: income.id,
+      amount: income.amount || 0,
+      income_type: income.income_type || 'owner_income',
+      destination_type: income.destination_type || 'cash',
+      description: income.description || '',
+      created_at: income.created_at,
+      supplier_id: income.supplier_id || null,
+      supplier_name: income.suppliers?.name || null
+    }))
 
-      const totalAmount = individualIncomes.reduce((sum, inc) => sum + inc.amount, 0)
+    const totalAmount = individualIncomes.reduce((sum, income) => sum + income.amount, 0)
 
-      return { 
-        individualIncomes,
-        totalAmount
-      }
-    } catch (error) {
-      console.error("getIncomeData error:", error)
-      return { 
-        individualIncomes: [],
-        totalAmount: 0
-      }
+    return {
+      individualIncomes,
+      totalAmount
+    }
+  } catch (error) {
+    console.error("getIncomeData error:", error)
+    return {
+      individualIncomes: [],
+      totalAmount: 0
     }
   }
+}
 
+  // ✅ UPDATED: getPreviousBalance - removed purchases, updated calculations
   const getPreviousBalance = async (date: string) => {
     try {
-      const [salesResult, purchaseResult, returnsResult, expensesResult, incomeResult] = await Promise.all([
+      const [salesResult, returnsResult, expensesResult, incomeResult] = await Promise.all([
         getSalesData('2000-01-01', date),
-        getPurchaseData('2000-01-01', date),
+        // ❌ REMOVED: getPurchaseData('2000-01-01', date)
         getReturnsData('2000-01-01', date),
         getExpensesData('2000-01-01', date),
         getIncomeData('2000-01-01', date)
       ])
 
-      // UPDATED: Supplier payments now appear as DEBIT entries
-      // Total debits: Cash sales + Purchase returns + Income + Supplier payments
+      // ✅ UPDATED: Total debits (money in) - excluding supplier payments
       const totalDebits = salesResult.cashAmount + returnsResult.purchaseReturns + 
-                         incomeResult.totalAmount + expensesResult.partyPaymentAmount
+                         incomeResult.totalAmount
       
-      // Total credits: Purchases + Sales returns + Other expenses (excluding supplier payments) + Bank payments
-      const otherExpenses = expensesResult.totalAmount - expensesResult.partyPaymentAmount
-      const totalCredits = purchaseResult.totalAmount + returnsResult.salesReturns + 
-                          otherExpenses + salesResult.bankAmount
+      // ✅ UPDATED: Total credits (money out) - including ALL expenses (which includes supplier payments)
+      const totalCredits = returnsResult.salesReturns + 
+                          expensesResult.totalAmount +  // ALL expenses including supplier payments
+                          salesResult.bankAmount
+      // ❌ REMOVED: purchaseResult.totalAmount
 
       return totalDebits - totalCredits
     } catch (error) {
@@ -864,7 +797,7 @@ export function LedgerClient() {
       .reduce((sum, e) => sum + e.debit, 0)
     
     const expenses = generalEntries
-      .filter(e => e.voucherType === 'Expense' || e.voucherType === 'Purchase' || 
+      .filter(e => e.voucherType === 'Expense' || e.voucherType === 'Supplier Payment' ||
                    e.voucherType === 'Sales Return' || e.voucherType === 'Bank Payment')
       .reduce((sum, e) => sum + e.credit, 0)
     
@@ -957,6 +890,7 @@ export function LedgerClient() {
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
+    // ✅ UPDATED: Changed "Party Income" to "Supplier Income"
     const content = `
       <!DOCTYPE html>
       <html>
@@ -997,7 +931,7 @@ export function LedgerClient() {
             ${incomeResult.individualIncomes.map((income: any) => `
               <tr>
                 <td>${new Date(income.created_at).toLocaleDateString('en-GB')}</td>
-                <td>${income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'}</td>
+                <td>${income.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income'}</td>
                 <td>${income.destination_type === 'bank' ? 'Bank' : 'Cash'}</td>
                 <td>${income.description || '—'}</td>
                 <td class="amount-cell">${income.amount.toFixed(2)}</td>
@@ -1281,7 +1215,7 @@ export function LedgerClient() {
           filename = 'income-voucher'
           rows = incomeResult.individualIncomes.map((e: any) => [
             new Date(e.created_at).toLocaleDateString(),
-            e.income_type === 'owner_income' ? 'Owner Income' : 'Party Income',
+            e.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income',  // ✅ CHANGED
             e.destination_type === 'bank' ? 'Bank' : 'Cash',
             `"${e.description || '-'}"`,
             e.amount.toFixed(2)
@@ -1350,7 +1284,7 @@ export function LedgerClient() {
         </Button>
       </div>
 
-      {/* Date Range Selection - UPDATED with flexible dates */}
+      {/* Date Range Selection */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1470,7 +1404,7 @@ export function LedgerClient() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{formatCurrency(profitLoss.expenses)}</div>
-            <p className="text-xs text-muted-foreground">Purchases + Operating</p>
+            <p className="text-xs text-muted-foreground">All Operating Costs</p>
           </CardContent>
         </Card>
 
@@ -1513,7 +1447,7 @@ export function LedgerClient() {
           <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
         </TabsList>
 
-        {/* General Ledger - DETAILED with Supplier Filter */}
+        {/* General Ledger */}
         <TabsContent value="general-ledger" className="space-y-4">
           <Card>
             <CardHeader>
@@ -1581,10 +1515,9 @@ export function LedgerClient() {
                       <TableCell className="max-w-md">{entry.description}</TableCell>
                       <TableCell>
                         <Badge variant={
-                          entry.voucherType === 'Supplier Payment' ? 'default' :
+                          entry.voucherType === 'Supplier Payment' ? 'secondary' :
                           entry.voucherType === 'Sales Receipt' ? 'outline' :
                           entry.voucherType === 'Income' ? 'outline' :
-                          entry.voucherType === 'Purchase' ? 'secondary' :
                           entry.voucherType === 'Expense' ? 'secondary' :
                           'outline'
                         }>
@@ -1630,14 +1563,14 @@ export function LedgerClient() {
           </Card>
         </TabsContent>
 
-        {/* Purchase Ledger with Supplier Filter */}
+        {/* Purchase Ledger */}
         <TabsContent value="purchase-ledger" className="space-y-4">
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Purchase Ledger</CardTitle>
-                  <CardDescription>All purchase transactions and supplier payments</CardDescription>
+                  <CardDescription>Supplier payments and returns</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => handleExportCSV('purchase')}>
@@ -1698,8 +1631,7 @@ export function LedgerClient() {
                       <TableCell>{entry.description}</TableCell>
                       <TableCell>
                         <Badge variant={
-                          entry.voucherType === 'Purchase' ? 'secondary' : 
-                          entry.voucherType === 'Supplier Payment' ? 'default' :
+                          entry.voucherType === 'Supplier Payment' ? 'secondary' :
                           'outline'
                         }>
                           {entry.voucherType}
@@ -1733,7 +1665,7 @@ export function LedgerClient() {
               {selectedSupplierPurchase !== "all" && (
                 <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
                   <p className="text-sm font-semibold text-blue-900">
-                    ✓ Showing purchases for: {selectedSupplierPurchase}
+                    ✓ Showing transactions for: {selectedSupplierPurchase}
                   </p>
                 </div>
               )}
@@ -1915,7 +1847,7 @@ export function LedgerClient() {
                           <TableCell>{new Date(income.created_at).toLocaleDateString('en-GB')}</TableCell>
                           <TableCell>
                             <Badge variant={income.income_type === 'owner_income' ? 'default' : 'secondary'}>
-                              {income.income_type === 'owner_income' ? 'Owner Income' : 'Party Income'}
+                              {income.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income'}
                             </Badge>
                           </TableCell>
                           <TableCell>

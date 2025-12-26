@@ -22,14 +22,21 @@ type IncomeEntry = {
   destination_type: "cash" | "bank"
   description?: string
   notes?: string
+  supplier_id?: string | null
+  supplier_name?: string | null
   created_at?: string
   updated_at?: string
+}
+
+type Supplier = {
+  id: string
+  name: string
 }
 
 // Income types
 const incomeTypes = [
   { value: "owner_income", label: "Owner Income" },
-  { value: "party_income", label: "Party Income" }
+  { value: "party_income", label: "Supplier Income" }
 ]
 
 // Destination types
@@ -48,6 +55,10 @@ export function IncomeOwnerClient() {
   const [endDate, setEndDate] = useState("")
   const [filterIncomeType, setFilterIncomeType] = useState("all")
   const [filterDestination, setFilterDestination] = useState("all")
+  const [filterSupplier, setFilterSupplier] = useState("all")
+  
+  // ✅ NEW: Suppliers state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
   
   // Add income form
   const [showAddForm, setShowAddForm] = useState(false)
@@ -57,8 +68,29 @@ export function IncomeOwnerClient() {
     amount: 0,
     destination_type: "" as "cash" | "bank" | "",
     description: "",
-    notes: ""
+    notes: "",
+    supplier_id: "" // ✅ NEW: Added supplier_id
   })
+
+  // ✅ NEW: Load suppliers from database
+  const loadSuppliers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id, name")
+        .order("name", { ascending: true })
+
+      if (error) throw error
+      setSuppliers((data as Supplier[]) || [])
+    } catch (err: any) {
+      console.error("Failed to load suppliers:", err)
+    }
+  }
+
+  // Load suppliers on component mount
+  useEffect(() => {
+    loadSuppliers()
+  }, [])
 
   // Load today's incomes by default
   useEffect(() => {
@@ -67,6 +99,19 @@ export function IncomeOwnerClient() {
     setEndDate(today)
     searchIncomes(today, today)
   }, [])
+
+  // ✅ UPDATED: Auto-fill description when supplier is selected for Supplier Income
+  useEffect(() => {
+    if (newIncome.income_type === 'party_income' && newIncome.supplier_id) {
+      const supplier = suppliers.find(s => s.id === newIncome.supplier_id)
+      if (supplier) {
+        setNewIncome(prev => ({
+          ...prev,
+          description: `${supplier.name}`
+        }))
+      }
+    }
+  }, [newIncome.supplier_id, newIncome.income_type, suppliers])
 
   const searchIncomes = async (start?: string, end?: string) => {
     const searchStart = start || startDate
@@ -81,7 +126,6 @@ export function IncomeOwnerClient() {
     setError(null)
     
     try {
-      // Check authentication
       const { data: userData, error: userError } = await supabase.auth.getUser()
       
       if (userError || !userData?.user) {
@@ -90,10 +134,16 @@ export function IncomeOwnerClient() {
 
       console.log("Searching income records for user:", userData.user.id)
 
-      // Build query
+      // ✅ UPDATED: Join with suppliers table to get supplier name
       let query = supabase
         .from("income_owner")
-        .select("*")
+        .select(`
+          *,
+          suppliers (
+            id,
+            name
+          )
+        `)
         .gte("date", searchStart)
         .order("date", { ascending: false })
         .order("created_at", { ascending: false })
@@ -111,8 +161,14 @@ export function IncomeOwnerClient() {
         throw new Error(`Database error: ${queryError.message}`)
       }
 
-      console.log(`Found ${data?.length || 0} income records`)
-      setIncomes(data || [])
+      // ✅ UPDATED: Map data to include supplier name
+      const mappedData = (data || []).map((item: any) => ({
+        ...item,
+        supplier_name: item.suppliers?.name || null
+      }))
+
+      console.log(`Found ${mappedData.length} income records`)
+      setIncomes(mappedData)
       
     } catch (err: any) {
       const errorMessage = err?.message || "Error loading income records"
@@ -126,7 +182,6 @@ export function IncomeOwnerClient() {
 
   const addIncome = async () => {
     try {
-      // Check authentication
       const { data: userData, error: userError } = await supabase.auth.getUser()
       
       if (userError || !userData?.user) {
@@ -152,14 +207,21 @@ export function IncomeOwnerClient() {
         return
       }
 
+      // ✅ NEW: Validate supplier for Supplier Income
+      if (newIncome.income_type === 'party_income' && !newIncome.supplier_id) {
+        alert("Please select a supplier for Supplier Income")
+        return
+      }
+
       // Build income object
-      const incomeToAdd = {
+      const incomeToAdd: any = {
         date: newIncome.date,
         income_type: newIncome.income_type,
         amount: newIncome.amount,
         destination_type: newIncome.destination_type,
         description: newIncome.description.trim() || null,
-        notes: newIncome.notes.trim() || null
+        notes: newIncome.notes.trim() || null,
+        supplier_id: newIncome.income_type === 'party_income' ? newIncome.supplier_id : null // ✅ NEW: Save supplier_id
       }
 
       console.log("Inserting income:", incomeToAdd)
@@ -167,7 +229,13 @@ export function IncomeOwnerClient() {
       const { data, error } = await supabase
         .from("income_owner")
         .insert(incomeToAdd)
-        .select()
+        .select(`
+          *,
+          suppliers (
+            id,
+            name
+          )
+        `)
         .single()
 
       console.log("Insert result:", { data, error })
@@ -183,17 +251,24 @@ export function IncomeOwnerClient() {
         return
       }
 
+      // ✅ UPDATED: Map data to include supplier name
+      const mappedIncome = {
+        ...data,
+        supplier_name: data.suppliers?.name || null
+      }
+
       // Add to local state
-      setIncomes([data, ...incomes])
+      setIncomes([mappedIncome, ...incomes])
       
       // Reset form
       setNewIncome({
-        date: newIncome.date, // Keep the same date
+        date: newIncome.date,
         income_type: "" as "owner_income" | "party_income" | "",
         amount: 0,
         destination_type: "" as "cash" | "bank" | "",
         description: "",
-        notes: ""
+        notes: "",
+        supplier_id: "" // ✅ NEW: Reset supplier
       })
       
       console.log("Income added successfully:", data)
@@ -253,7 +328,7 @@ export function IncomeOwnerClient() {
       : `${formatDate(startDate)} --- ${formatDate(endDate)}`
 
     const getIncomeTypeLabel = (type: string) => {
-      return type === "owner_income" ? "Owner Income" : "Party Income"
+      return type === "owner_income" ? "Owner Income" : "Supplier Income"
     }
 
     const getDestinationLabel = (income: IncomeEntry) => {
@@ -332,11 +407,12 @@ export function IncomeOwnerClient() {
         <table class="income-table">
           <thead>
             <tr>
-              <th style="width: 15%;">Date</th>
-              <th style="width: 20%;">Income Type</th>
-              <th style="width: 20%;">Destination</th>
+              <th style="width: 12%;">Date</th>
+              <th style="width: 15%;">Income Type</th>
+              <th style="width: 18%;">Supplier</th>
+              <th style="width: 15%;">Destination</th>
               <th style="width: 25%;">Description</th>
-              <th style="width: 20%;">Amount</th>
+              <th style="width: 15%;">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -344,13 +420,14 @@ export function IncomeOwnerClient() {
               <tr>
                 <td>${formatDate(income.date)}</td>
                 <td>${getIncomeTypeLabel(income.income_type)}</td>
+                <td>${income.supplier_name || '—'}</td>
                 <td>${getDestinationLabel(income)}</td>
-                <td>${income.description}</td>
+                <td>${income.description || '—'}</td>
                 <td class="amount-cell">৳${income.amount.toFixed(2)}</td>
               </tr>
             `).join('')}
             <tr class="total-row">
-              <td colspan="4" style="text-align: right; font-weight: bold;">TOTAL INCOME:</td>
+              <td colspan="5" style="text-align: right; font-weight: bold;">TOTAL INCOME:</td>
               <td class="amount-cell">৳${totalAmount.toFixed(2)}</td>
             </tr>
           </tbody>
@@ -365,11 +442,12 @@ export function IncomeOwnerClient() {
     `
   }
 
-  // Apply filters to incomes
+  // ✅ UPDATED: Apply filters including supplier
   const filteredIncomes = incomes.filter((income) => {
     const matchesIncomeType = filterIncomeType === "all" || income.income_type === filterIncomeType
     const matchesDestination = filterDestination === "all" || income.destination_type === filterDestination
-    return matchesIncomeType && matchesDestination
+    const matchesSupplier = filterSupplier === "all" || income.supplier_id === filterSupplier
+    return matchesIncomeType && matchesDestination && matchesSupplier
   })
 
   const totalAmount = filteredIncomes.reduce((sum, income) => sum + (income.amount || 0), 0)
@@ -377,7 +455,7 @@ export function IncomeOwnerClient() {
   const getIncomeTypeBadge = (type: string) => {
     return type === "owner_income" 
       ? <Badge className="bg-blue-100 text-blue-800">Owner Income</Badge>
-      : <Badge className="bg-purple-100 text-purple-800">Party Income</Badge>
+      : <Badge className="bg-purple-100 text-purple-800">Supplier Income</Badge>
   }
 
   const getDestinationBadge = (destination: string) => {
@@ -406,7 +484,7 @@ export function IncomeOwnerClient() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
             <div>
               <Label htmlFor="start-date">Start Date</Label>
               <Input
@@ -436,6 +514,23 @@ export function IncomeOwnerClient() {
                   {incomeTypes.map(type => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {/* ✅ NEW: Supplier filter */}
+            <div>
+              <Label htmlFor="filter-supplier">Supplier</Label>
+              <Select value={filterSupplier} onValueChange={setFilterSupplier}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All Suppliers" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Suppliers</SelectItem>
+                  {suppliers.map(supplier => (
+                    <SelectItem key={supplier.id} value={supplier.id}>
+                      {supplier.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -503,7 +598,7 @@ export function IncomeOwnerClient() {
                 <Select 
                   value={newIncome.income_type} 
                   onValueChange={(value: "owner_income" | "party_income") => 
-                    setNewIncome({...newIncome, income_type: value})
+                    setNewIncome({...newIncome, income_type: value, supplier_id: ""})
                   }
                 >
                   <SelectTrigger>
@@ -518,6 +613,34 @@ export function IncomeOwnerClient() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* ✅ NEW: Supplier dropdown - only show for Supplier Income */}
+              {newIncome.income_type === 'party_income' && (
+                <div>
+                  <Label htmlFor="supplier">Supplier*</Label>
+                  <Select 
+                    value={newIncome.supplier_id} 
+                    onValueChange={(value) => setNewIncome({...newIncome, supplier_id: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.length === 0 ? (
+                        <SelectItem value="none" disabled>
+                          No suppliers found
+                        </SelectItem>
+                      ) : (
+                        suppliers.map(supplier => (
+                          <SelectItem key={supplier.id} value={supplier.id}>
+                            {supplier.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div>
                 <Label htmlFor="destination-type">Destination*</Label>
@@ -556,13 +679,16 @@ export function IncomeOwnerClient() {
             </div>
 
             <div className="mt-4">
-              <Label htmlFor="description">Description (Optional)</Label>
+              <Label htmlFor="description">
+                Description {newIncome.income_type === 'party_income' ? '(Auto-filled)' : '(Optional)'}
+              </Label>
               <Textarea
                 id="description"
                 value={newIncome.description}
                 onChange={(e) => setNewIncome({...newIncome, description: e.target.value})}
                 placeholder="Enter income description"
                 rows={3}
+                readOnly={newIncome.income_type === 'party_income' && !!newIncome.supplier_id}
               />
             </div>
 
@@ -636,6 +762,7 @@ export function IncomeOwnerClient() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Income Type</TableHead>
+                    <TableHead>Supplier</TableHead>
                     <TableHead>Destination</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
@@ -647,9 +774,10 @@ export function IncomeOwnerClient() {
                     <TableRow key={income.id}>
                       <TableCell>{income.date}</TableCell>
                       <TableCell>{getIncomeTypeBadge(income.income_type)}</TableCell>
+                      <TableCell>{income.supplier_name || '—'}</TableCell>
                       <TableCell>{getDestinationBadge(income.destination_type)}</TableCell>
                       <TableCell className="max-w-xs truncate">
-                        {income.description || "-"}
+                        {income.description || "—"}
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         ৳{income.amount.toFixed(2)}
@@ -667,7 +795,7 @@ export function IncomeOwnerClient() {
                     </TableRow>
                   ))}
                   <TableRow className="font-bold bg-gray-50">
-                    <TableCell colSpan={4}>TOTAL INCOME</TableCell>
+                    <TableCell colSpan={5}>TOTAL INCOME</TableCell>
                     <TableCell className="text-right">৳{totalAmount.toFixed(2)}</TableCell>
                     <TableCell></TableCell>
                   </TableRow>
