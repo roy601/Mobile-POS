@@ -406,7 +406,7 @@ export function POSClient() {
 
       // Footer
       const footerBanglaLine = esc(
-        "যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।"
+        "যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।"
       );
       const footerContactNote = esc(
         "If you find any issue in this invoice, contact: Cell: 01678-077128"
@@ -579,20 +579,10 @@ export function POSClient() {
     setProductForm((f) => ({ ...f, barcode: value }));
   };
 
-  // lookup on click / scanner confirm
+  // lookup on click / scanner confirm - NO CUSTOMER CHECK
   const lookupByBarcode = async (rawBarcode: string) => {
     const barcode = rawBarcode.trim();
     if (!barcode) return;
-
-    if (!saleStarted) {
-      toast({
-        title: "Select customer first",
-        description:
-          "Save/select a customer to start a sale before loading products.",
-        variant: "destructive",
-      });
-      return;
-    }
 
     setIsLoading(true);
     try {
@@ -631,23 +621,15 @@ export function POSClient() {
 
   // ---- Cart / sale
 
-  const processSaleItem = async (item: CartItem) => {
-    if (!currentSaleId) {
-      toast({
-        title: "Error",
-        description: "No active sale session",
-        variant: "destructive",
-      });
-      return false;
-    }
-
+  // Helper function that accepts saleId as parameter to avoid state timing issues
+  const processSaleItemWithId = async (item: CartItem, saleId: number) => {
     try {
       // For items without barcodes, just insert into sold_products
       if (!item.barcode || item.barcode.trim() === "") {
         const { error: insertError } = await supabase
           .from("sold_products")
           .insert({
-            sales_id: currentSaleId,
+            sales_id: saleId,
             barcode: null,
             product_name: item.name,
             model_number: item.model || null,
@@ -748,7 +730,7 @@ export function POSClient() {
       const { error: insertError } = await supabase
         .from("sold_products")
         .insert({
-          sales_id: currentSaleId,
+          sales_id: saleId,
           barcode: barcodeNumeric,
           product_name: productInfo.product_name,
           model_number: productInfo.model_number,
@@ -826,35 +808,8 @@ export function POSClient() {
     }
   };
 
+  // ✅ UPDATED: No customer check, no sale start
   const addToCart = async () => {
-    if (!customer) {
-      toast({
-        title: "Select customer first",
-        description: "Save/select a customer before adding items.",
-        variant: "destructive",
-      });
-      return;
-    }
-    // Lazy-start sale if needed
-    if (!saleStarted) {
-      try {
-        const { saleId, invoiceNumber: inv } = await startSaleForCustomer(
-          customer as Required<Customer>
-        );
-        toast({
-          title: "Sale Started",
-          description: `Sale #${saleId}${inv ? ` • ${inv}` : ""}`,
-        });
-      } catch (e: any) {
-        toast({
-          title: "Couldn't start sale",
-          description: e?.message ?? "start_sale failed",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
     if (!productForm.name || productForm.price <= 0) {
       toast({
         title: "Error",
@@ -960,12 +915,63 @@ export function POSClient() {
     setInvoiceNumber(null);
     toast({
       title: "New Sale",
-      description: "Select or save a customer to begin.",
+      description: "Ready for new transaction",
     });
   };
 
+  // ✅ UPDATED: Check customer and start sale at completion
   const completeSale = async () => {
-    if (!saleStarted || cartItems.length === 0) return;
+    // Require customer at completion
+    if (!customer) {
+      toast({
+        title: "Customer Required",
+        description: "Please select or save a customer before completing the sale.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      toast({
+        title: "Empty Cart",
+        description: "Please add items to cart before completing sale.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Use local variable to track active sale ID to avoid state timing issues
+    let activeSaleId = currentSaleId;
+    let activeInvoiceNumber = invoiceNumber;
+
+    // Start sale if not already started
+    if (!saleStarted) {
+      try {
+        const { saleId, invoiceNumber: inv } = await startSaleForCustomer(
+          customer as Required<Customer>
+        );
+        activeSaleId = saleId; // Use this directly, don't wait for state
+        activeInvoiceNumber = inv;
+        console.log(`Sale started: ID ${saleId}, Invoice ${inv}`);
+      } catch (e: any) {
+        toast({
+          title: "Couldn't start sale",
+          description: e?.message ?? "start_sale failed",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    // Verify we have a sale ID before proceeding
+    if (!activeSaleId) {
+      toast({
+        title: "Error",
+        description: "Failed to initialize sale. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Validation: ensure payment is sufficient or due is acknowledged
     if (totalReceived < total && remainingDue === 0) {
@@ -1011,18 +1017,18 @@ export function POSClient() {
 
     setIsLoading(true);
     try {
-      // Process each cart item
+      // Process each cart item using activeSaleId
       let allProcessed = true;
       for (const item of cartItems) {
         if (item.barcode) {
-          const ok = await processSaleItem(item);
+          const ok = await processSaleItemWithId(item, activeSaleId);
           if (!ok) {
             allProcessed = false;
             break;
           }
         } else {
           const { error } = await supabase.from("sold_products").insert({
-            sales_id: currentSaleId,
+            sales_id: activeSaleId,
             barcode: item.barcode || null,
             product_name: item.name,
             color: item.color,
@@ -1080,7 +1086,7 @@ export function POSClient() {
           bank_transfer_bank: paymentForm.bankTransferBank,
           status: "completed",
         })
-        .eq("id", currentSaleId);
+        .eq("id", activeSaleId);
       if (saleError) throw saleError;
 
       // Update customer dues if there's remaining due or previous dues were cleared
@@ -1089,16 +1095,16 @@ export function POSClient() {
       }
 
       // Ensure invoice number is present
-      let inv = invoiceNumber;
-      if (!inv && currentSaleId) {
+      let inv = activeInvoiceNumber;
+      if (!inv && activeSaleId) {
         const { data: sRow } = await supabase
           .from("sales")
           .select("invoice_number")
-          .eq("id", currentSaleId)
+          .eq("id", activeSaleId)
           .single();
         inv =
           sRow?.invoice_number ||
-          `INV-${String(currentSaleId).padStart(6, "0")}`;
+          `INV-${String(activeSaleId).padStart(6, "0")}`;
         setInvoiceNumber(inv);
       }
 
@@ -1113,7 +1119,7 @@ export function POSClient() {
       });
 
       // Open printable receipt
-      if (currentSaleId) await openPrintableReceipt(currentSaleId);
+      if (activeSaleId) await openPrintableReceipt(activeSaleId);
 
       // Reset for next transaction
       await newSale();
@@ -1152,7 +1158,39 @@ export function POSClient() {
   };
 
   const holdSale = async () => {
-    if (!saleStarted || cartItems.length === 0) return;
+    if (cartItems.length === 0) {
+      toast({
+        title: "Empty Cart",
+        description: "Add items to cart before holding sale.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Require customer for held sales too
+    if (!customer) {
+      toast({
+        title: "Customer Required",
+        description: "Please select or save a customer before holding the sale.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Start sale if not started
+    if (!saleStarted) {
+      try {
+        await startSaleForCustomer(customer as Required<Customer>);
+      } catch (e: any) {
+        toast({
+          title: "Couldn't start sale",
+          description: e?.message ?? "start_sale failed",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     try {
       const { error } = await supabase
         .from("sales")
@@ -1202,7 +1240,6 @@ export function POSClient() {
     }
     setCustomer(selectedCustomer);
     setShowCustomerSearch(false);
-    // Do NOT auto-start sale; start on button or when adding first item
   };
 
   const saveCustomer = async () => {
@@ -1229,7 +1266,7 @@ export function POSClient() {
       const { data, error } = await supabase.rpc("upsert_customer", {
         p_name: customerName,
         p_phone: customerPhone || null,
-        p_email: customerPhone || null,
+        p_email: customerEmail || null,
       });
       if (error) throw new Error(error.message || "upsert_customer failed");
       if (!data?.success || !data?.customer?.id)
@@ -1305,44 +1342,9 @@ export function POSClient() {
                         Previous Dues: ৳{customer.dues.toFixed(2)}
                       </p>
                     )}
-                    {saleStarted ? (
-                      <p className="text-xs text-green-700 mt-1">
-                        Sale started (ID: {currentSaleId})
-                        {invoiceNumber ? ` • Invoice: ${invoiceNumber}` : ""}
-                      </p>
-                    ) : (
-                      <div className="flex items-center gap-2 mt-2">
-                        <p className="text-xs text-amber-700">
-                          No sale started
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              const { saleId, invoiceNumber: inv } =
-                                await startSaleForCustomer(
-                                  customer as Required<Customer>
-                                );
-                              toast({
-                                title: "Sale Started",
-                                description: `Sale #${saleId}${
-                                  inv ? ` • ${inv}` : ""
-                                }`,
-                              });
-                            } catch (e: any) {
-                              toast({
-                                title: "Couldn't start sale",
-                                description: e?.message ?? "start_sale failed",
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                        >
-                          Start Sale
-                        </Button>
-                      </div>
-                    )}
+                    <p className="text-xs text-green-600 mt-1">
+                      ✓ Customer selected
+                    </p>
                   </div>
                   <Button
                     variant="outline"
@@ -1401,13 +1403,6 @@ export function POSClient() {
             <CardTitle>Product Entry</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!saleStarted && (
-              <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-amber-800 text-sm">
-                Select or save a customer to start a sale before adding
-                products.
-              </div>
-            )}
-
             <div className="flex gap-2">
               <div className="flex-1">
                 <Label htmlFor="barcode">Barcode</Label>
@@ -1416,23 +1411,21 @@ export function POSClient() {
                   placeholder="Scan or enter barcode"
                   value={productForm.barcode}
                   onChange={(e) => handleBarcodeInput(e.target.value)}
-                  disabled={isLoading || !saleStarted}
+                  disabled={isLoading}
                 />
               </div>
               <div className="flex items-end gap-2">
                 <Button
                   variant="outline"
                   onClick={() => lookupByBarcode(productForm.barcode)}
-                  disabled={
-                    isLoading || !saleStarted || !productForm.barcode.trim()
-                  }
+                  disabled={isLoading || !productForm.barcode.trim()}
                 >
                   Load
                 </Button>
                 <Button
                   size="icon"
                   onClick={() => setShowScanner(true)}
-                  disabled={isLoading || !saleStarted}
+                  disabled={isLoading}
                 >
                   <QrCode className="h-4 w-4" />
                 </Button>
@@ -1451,7 +1444,7 @@ export function POSClient() {
               <Label htmlFor="product-name">Product Name</Label>
               <Input
                 id="product-name"
-                placeholder="Auto-filled from barcode"
+                placeholder="Auto-filled from barcode or enter manually"
                 value={productForm.name}
                 onChange={(e) =>
                   setProductForm({ ...productForm, name: e.target.value })
@@ -1459,7 +1452,6 @@ export function POSClient() {
                 className={
                   productForm.barcode && productForm.name ? "bg-green-50" : ""
                 }
-                disabled={!saleStarted}
               />
             </div>
 
@@ -1478,7 +1470,6 @@ export function POSClient() {
                       ? "bg-green-50"
                       : ""
                   }
-                  disabled={!saleStarted}
                 />
               </div>
               <div>
@@ -1494,7 +1485,6 @@ export function POSClient() {
                         quantity: Math.max(1, productForm.quantity - 1),
                       })
                     }
-                    disabled={!saleStarted}
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
@@ -1510,7 +1500,6 @@ export function POSClient() {
                         ),
                       })
                     }
-                    disabled={!saleStarted}
                   />
                   <Button
                     variant="outline"
@@ -1522,7 +1511,6 @@ export function POSClient() {
                         quantity: productForm.quantity + 1,
                       })
                     }
-                    disabled={!saleStarted}
                   >
                     <Plus className="h-4 w-4" />
                   </Button>
@@ -1549,7 +1537,6 @@ export function POSClient() {
                       ? "bg-green-50"
                       : ""
                   }
-                  disabled={!saleStarted}
                 />
               </div>
               <div>
@@ -1565,12 +1552,11 @@ export function POSClient() {
                       discount: Number.parseFloat(e.target.value) || 0,
                     })
                   }
-                  disabled={!saleStarted}
                 />
               </div>
             </div>
 
-            {productForm.barcode && saleStarted && (
+            {productForm.barcode && (
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-800 font-medium">
                   ✓ Product loaded from inventory
@@ -1585,7 +1571,7 @@ export function POSClient() {
             <Button
               className="w-full bg-green-600 hover:bg-green-700"
               onClick={addToCart}
-              disabled={isLoading || !saleStarted}
+              disabled={isLoading}
             >
               Add to Cart
             </Button>
@@ -1620,7 +1606,7 @@ export function POSClient() {
                         </p>
                         <p className="text-muted-foreground">
                           ৳{item.price.toFixed(2)} × {item.quantity}
-                          {item.discount > 0 && ` (-${item.discount}%)`}
+                          {item.discount > 0 && ` (-৳${item.discount})`}
                         </p>
                         {item.barcode && (
                           <p className="text-xs text-muted-foreground">
@@ -1641,7 +1627,6 @@ export function POSClient() {
                           onClick={() =>
                             updateQuantity(item.id, item.quantity - 1)
                           }
-                          disabled={!saleStarted}
                         >
                           <Minus className="h-3 w-3" />
                         </Button>
@@ -1653,7 +1638,6 @@ export function POSClient() {
                           onClick={() =>
                             updateQuantity(item.id, item.quantity + 1)
                           }
-                          disabled={!saleStarted}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -1662,7 +1646,6 @@ export function POSClient() {
                           size="icon"
                           className="h-6 w-6 text-red-500"
                           onClick={() => removeFromCart(item.id)}
-                          disabled={!saleStarted}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -1710,7 +1693,6 @@ export function POSClient() {
               <Select
                 value={paymentForm.method}
                 onValueChange={handlePaymentMethodChange}
-                disabled={!saleStarted}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select payment method" />
@@ -1736,7 +1718,6 @@ export function POSClient() {
                   onValueChange={(value) =>
                     handlePaymentChange("mobileBankingMethod", value)
                   }
-                  disabled={!saleStarted}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select mobile banking" />
@@ -1772,17 +1753,15 @@ export function POSClient() {
                       handlePaymentChange("bankTransferBank", value);
                     }
                   }}
-                  disabled={!saleStarted}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select bank" />
                   </SelectTrigger>
                   <SelectContent>
                     {bankAccounts.map((bank) => (
-                      <SelectItem
-                        key={bank.id}
-                        value={bank.bankName}
-                      ></SelectItem>
+                      <SelectItem key={bank.id} value={bank.bankName}>
+                        {bank.bankName}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -1807,7 +1786,6 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted}
                     />
                   </div>
                   <div>
@@ -1818,7 +1796,6 @@ export function POSClient() {
                         onValueChange={(value) =>
                           handlePaymentChange("cardBank", value)
                         }
-                        disabled={!saleStarted}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select bank" />
@@ -1842,7 +1819,7 @@ export function POSClient() {
                             Number.parseFloat(e.target.value) || 0
                           )
                         }
-                        disabled={!saleStarted || !paymentForm.cardBank}
+                        disabled={!paymentForm.cardBank}
                       />
                     </div>
                   </div>
@@ -1862,7 +1839,6 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted}
                     />
                   </div>
                   <div>
@@ -1878,7 +1854,6 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted}
                     />
                   </div>
                 </div>
@@ -1897,7 +1872,6 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted}
                     />
                   </div>
                   <div>
@@ -1913,7 +1887,6 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted}
                     />
                   </div>
                 </div>
@@ -1926,7 +1899,6 @@ export function POSClient() {
                       onValueChange={(value) =>
                         handlePaymentChange("bankTransferBank", value)
                       }
-                      disabled={!saleStarted}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select bank" />
@@ -1950,7 +1922,7 @@ export function POSClient() {
                           Number.parseFloat(e.target.value) || 0
                         )
                       }
-                      disabled={!saleStarted || !paymentForm.bankTransferBank}
+                      disabled={!paymentForm.bankTransferBank}
                     />
                   </div>
                 </div>
@@ -1995,9 +1967,8 @@ export function POSClient() {
                         }
                       }}
                       disabled={
-                        !saleStarted ||
-                        (paymentForm.method === "mobile-banking" &&
-                          !paymentForm.mobileBankingMethod)
+                        paymentForm.method === "mobile-banking" &&
+                        !paymentForm.mobileBankingMethod
                       }
                     />
                   </div>
@@ -2029,7 +2000,6 @@ export function POSClient() {
                             handlePaymentChange("bankTransferReceived", value);
                           }
                         }}
-                        disabled={!saleStarted}
                       />
                     </div>
                   )}
@@ -2050,7 +2020,6 @@ export function POSClient() {
                     Number.parseFloat(e.target.value) || 0
                   )
                 }
-                disabled={!saleStarted}
                 className={
                   remainingDue > 0 ? "bg-yellow-50 border-yellow-300" : ""
                 }
@@ -2092,16 +2061,20 @@ export function POSClient() {
                 className="w-full bg-blue-600 hover:bg-blue-700"
                 size="lg"
                 onClick={completeSale}
-                disabled={!saleStarted || cartItems.length === 0 || isLoading}
+                disabled={cartItems.length === 0 || isLoading}
               >
                 <CreditCard className="mr-2 h-5 w-5" />
-                {isLoading ? "Processing..." : "Complete Sale"}
+                {isLoading
+                  ? "Processing..."
+                  : !customer
+                  ? "Select Customer to Complete"
+                  : "Complete Sale"}
               </Button>
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
                   onClick={holdSale}
-                  disabled={!saleStarted || cartItems.length === 0 || isLoading}
+                  disabled={cartItems.length === 0 || isLoading}
                 >
                   Hold Sale
                 </Button>
