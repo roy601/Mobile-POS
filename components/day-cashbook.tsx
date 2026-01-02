@@ -171,10 +171,10 @@ export function DayCashbook() {
       });
 
       // Cash Sales (actual cash received, money IN)
-      if (salesData.cashAmount > 0) {
+      if (salesData.totalSalesAmount > 0) {
         entries.push({
           particulars: "Cash Sales",
-          debit: salesData.cashAmount,
+          debit: salesData.totalSalesAmount,
           credit: 0,
         });
       }

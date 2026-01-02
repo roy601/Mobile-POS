@@ -47,14 +47,11 @@ export function LedgerClient() {
   const [endDate, setEndDate] = useState<string>(today)
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedSupplierGeneral, setSelectedSupplierGeneral] = useState<string>("all")
   const [selectedSupplierPurchase, setSelectedSupplierPurchase] = useState<string>("all")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [purchaseEntries, setPurchaseEntries] = useState<LedgerEntry[]>([])
-  const [salesEntries, setSalesEntries] = useState<LedgerEntry[]>([])
-  const [generalEntries, setGeneralEntries] = useState<LedgerEntry[]>([])
   const [balanceSheetData, setBalanceSheetData] = useState<BalanceSheetData | null>(null)
   
   // Store expense and income data for voucher tabs
@@ -108,10 +105,9 @@ export function LedgerClient() {
       prevDate.setDate(prevDate.getDate() - 1)
       const previousDate = prevDate.toISOString().split('T')[0]
 
-      // ✅ UPDATED: Removed getPurchaseData from Promise.all
-      const [salesResult, returnsResult, expensesData, incomeData, openingBalance] = await Promise.all([
+      const [salesResult, purchaseResult, returnsResult, expensesData, incomeData, openingBalance] = await Promise.all([
         getSalesData(start, end),
-        // ❌ REMOVED: getPurchaseData(start, end)
+        getPurchaseData(start, end),
         getReturnsData(start, end),
         getExpensesData(start, end),
         getIncomeData(start, end),
@@ -121,173 +117,6 @@ export function LedgerClient() {
       // Store for voucher tabs
       setExpensesResult(expensesData)
       setIncomeResult(incomeData)
-
-      // ============================================
-      // GENERAL LEDGER - Detailed individual transactions
-      // ============================================
-      const generalLedger: LedgerEntry[] = []
-      let balance = openingBalance
-
-      // 1. Opening Balance (BFC)
-      generalLedger.push({
-        id: 'opening',
-        date: start,
-        description: 'Opening Balance (BFC)',
-        voucherType: 'Opening',
-        debit: balance >= 0 ? balance : 0,
-        credit: balance < 0 ? Math.abs(balance) : 0,
-        balance: balance
-      })
-
-      // 2. Individual Sales - CASH ONLY (DEBIT - Money IN)
-      if (salesResult.individualSales && salesResult.individualSales.length > 0) {
-        salesResult.individualSales.forEach((sale: any) => {
-          if (sale.cashAmount > 0) {
-            balance += sale.cashAmount
-            generalLedger.push({
-              id: `sale-cash-${sale.id}`,
-              date: sale.date,
-              description: `Cash Sale ${sale.invoiceNumber ? `#${sale.invoiceNumber}` : ''}`,
-              voucherType: 'Sales Receipt',
-              debit: sale.cashAmount,
-              credit: 0,
-              balance: balance,
-              customer: sale.customerName,
-              reference: sale.invoiceNumber
-            })
-          }
-        })
-      }
-
-      // 2b. Bank/Digital Payments (CREDIT - Money OUT to bank)
-      if (salesResult.individualSales && salesResult.individualSales.length > 0) {
-        salesResult.individualSales.forEach((sale: any) => {
-          if (sale.bankAmount > 0) {
-            balance -= sale.bankAmount
-            generalLedger.push({
-              id: `sale-bank-${sale.id}`,
-              date: sale.date,
-              description: `Bank/Digital Payment ${sale.invoiceNumber ? `#${sale.invoiceNumber}` : ''}`,
-              voucherType: 'Bank Payment',
-              debit: 0,
-              credit: sale.bankAmount,
-              balance: balance,
-              customer: sale.customerName,
-              reference: sale.invoiceNumber
-            })
-          }
-        })
-      }
-
-      // 3. Purchase Returns (DEBIT - Money IN)
-      if (returnsResult.purchaseReturns > 0) {
-        balance += returnsResult.purchaseReturns
-        generalLedger.push({
-          id: 'purchase-returns',
-          date: end,
-          description: 'Purchase Returns',
-          voucherType: 'Purchase Return',
-          debit: returnsResult.purchaseReturns,
-          credit: 0,
-          balance: balance
-        })
-      }
-
-      // 4. Individual Income entries (DEBIT - Money IN)
-      // ✅ UPDATED: Changed "Party Income" to "Supplier Income"
-        if (incomeData.individualIncomes && incomeData.individualIncomes.length > 0) {
-          incomeData.individualIncomes.forEach((income: any, idx: number) => {
-            balance += income.amount
-            const incomeTypeLabel = income.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income'
-            const destinationLabel = income.destination_type === 'bank' ? 'Bank' : 'Cash'
-            
-            generalLedger.push({
-              id: `income-${idx}`,
-              date: income.created_at,
-              description: `${incomeTypeLabel} (${destinationLabel})${income.description ? ' - ' + income.description : ''}`,
-              voucherType: 'Income',
-              debit: income.amount,
-              credit: 0,
-              balance: balance,
-              supplier: income.supplier_name || undefined
-            })
-          })
-        }
-
-      // ❌ REMOVED: Individual Purchases - no longer tracked in ledger
-
-      // 5. Sales Returns (CREDIT - Money OUT)
-      if (returnsResult.salesReturns > 0) {
-        balance -= returnsResult.salesReturns
-        generalLedger.push({
-          id: 'sales-returns',
-          date: end,
-          description: 'Sales Returns (Refunds)',
-          voucherType: 'Sales Return',
-          debit: 0,
-          credit: returnsResult.salesReturns,
-          balance: balance
-        })
-      }
-
-      // 6. Individual Expenses (CREDIT - Money OUT) - EXCLUDING supplier payments
-      if (expensesData.individualExpenses && expensesData.individualExpenses.length > 0) {
-        expensesData.individualExpenses
-          .filter((expense: any) => expense.category !== 'party_payment') // Exclude supplier payments
-          .forEach((expense: any, idx: number) => {
-            balance -= expense.amount
-            const category = expense.custom_category || expense.category || 'Other'
-            
-            generalLedger.push({
-              id: `expense-${idx}`,
-              date: expense.created_at,
-              description: `${category} - ${expense.description}`,
-              voucherType: 'Expense',
-              debit: 0,
-              credit: expense.amount,
-              balance: balance,
-              supplier: expense.supplier || undefined
-            })
-          })
-      }
-
-      // 7. ✅ UPDATED: Supplier Payments (CREDIT - Money OUT)
-      if (expensesData.supplierPayments && expensesData.supplierPayments.length > 0) {
-        expensesData.supplierPayments.forEach((payment: any, idx: number) => {
-          balance -= payment.amount  // ✅ CHANGED: reduces balance
-          
-          generalLedger.push({
-            id: `supplier-payment-${idx}`,
-            date: payment.created_at,
-            description: payment.description || 'Supplier Payment',
-            voucherType: 'Supplier Payment',
-            debit: 0,                  // ✅ CHANGED
-            credit: payment.amount,    // ✅ CHANGED
-            balance: balance,
-            supplier: payment.supplier || undefined,
-            reference: `PAY-${payment.id}`
-          })
-        })
-      }
-
-      // Sort General Ledger by date
-      const sortByDate = (a: LedgerEntry, b: LedgerEntry) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      generalLedger.sort(sortByDate)
-
-      // Recalculate balances after sorting to ensure accuracy
-      let runningBalance = openingBalance
-      generalLedger.forEach((entry, index) => {
-        if (index === 0) {
-          entry.balance = runningBalance
-        } else {
-          runningBalance = runningBalance + entry.debit - entry.credit
-          entry.balance = runningBalance
-        }
-      })
-
-      // Store the final balance for comparison
-      const finalBalance = generalLedger.length > 0 ? generalLedger[generalLedger.length - 1].balance : openingBalance
-      setCashbookBalance(finalBalance)
 
       // ============================================
       // PURCHASE LEDGER
@@ -305,20 +134,46 @@ export function LedgerClient() {
         balance: purchaseBalance
       })
 
-      // ❌ REMOVED: Individual Purchases - no longer tracked
+      // Individual Purchases (DEBIT - goods purchased/liability created)
+      if (purchaseResult.individualPurchases && purchaseResult.individualPurchases.length > 0) {
+        purchaseResult.individualPurchases.forEach((purchase: any) => {
+          purchaseBalance += purchase.cashAmount  // increases balance (represents goods received)
+          
+          // Build a more descriptive description
+          let description = 'Purchase'
+          if (purchase.productName) {
+            description += ` - ${purchase.productName}`
+          }
+          if (purchase.modelNumber) {
+            description += ` (${purchase.modelNumber})`
+          }
+          
+          purchaseLedger.push({
+            id: `purchase-${purchase.id}`,
+            date: purchase.date,
+            description: description,
+            voucherType: 'Purchase',
+            debit: purchase.cashAmount,
+            credit: 0,
+            balance: purchaseBalance,
+            supplier: purchase.supplierName,
+            reference: `PURCH-${purchase.id}`
+          })
+        })
+      }
 
-      // ✅ UPDATED: Supplier Payments (CREDIT - cash going out)
+      // Supplier Payments (CREDIT - cash paid out)
       if (expensesData.supplierPayments && expensesData.supplierPayments.length > 0) {
         expensesData.supplierPayments.forEach((payment: any, idx: number) => {
-          purchaseBalance -= payment.amount  // ✅ CHANGED: reduces balance
+          purchaseBalance -= payment.amount  // reduces balance (cash going out)
           
           purchaseLedger.push({
             id: `supplier-payment-${idx}`,
             date: payment.created_at,
             description: payment.description || 'Supplier Payment',
             voucherType: 'Supplier Payment',
-            debit: 0,                  // ✅ CHANGED
-            credit: payment.amount,    // ✅ CHANGED
+            debit: 0,
+            credit: payment.amount,
             balance: purchaseBalance,
             supplier: payment.supplier || undefined,
             reference: `PAY-${payment.id}`
@@ -326,20 +181,22 @@ export function LedgerClient() {
         })
       }
 
+      // Purchase Returns (CREDIT - goods returned)
       if (returnsResult.purchaseReturns > 0) {
-        purchaseBalance += returnsResult.purchaseReturns
+        purchaseBalance -= returnsResult.purchaseReturns
         purchaseLedger.push({
           id: 'purchase-returns',
           date: end,
           description: 'Purchase Returns',
           voucherType: 'Purchase Return',
-          debit: returnsResult.purchaseReturns,
-          credit: 0,
+          debit: 0,
+          credit: returnsResult.purchaseReturns,
           balance: purchaseBalance
         })
       }
 
       // Sort Purchase Ledger by date
+      const sortByDate = (a: LedgerEntry, b: LedgerEntry) => new Date(a.date).getTime() - new Date(b.date).getTime()
       purchaseLedger.sort(sortByDate)
 
       // Recalculate balances after sorting
@@ -353,78 +210,17 @@ export function LedgerClient() {
         }
       })
 
-      // ============================================
-      // SALES LEDGER
-      // ============================================
-      const salesLedger: LedgerEntry[] = []
-      let salesBalance = openingBalance
-
-      salesLedger.push({
-        id: 'opening',
-        date: start,
-        description: 'Opening Balance (BFC)',
-        voucherType: 'Opening',
-        debit: salesBalance >= 0 ? salesBalance : 0,
-        credit: salesBalance < 0 ? Math.abs(salesBalance) : 0,
-        balance: salesBalance
-      })
-
-      // Individual Sales - Cash in Debit
-      if (salesResult.individualSales && salesResult.individualSales.length > 0) {
-        salesResult.individualSales.forEach((sale: any) => {
-          if (sale.cashAmount > 0) {
-            salesBalance += sale.cashAmount
-            salesLedger.push({
-              id: `sale-cash-${sale.id}`,
-              date: sale.date,
-              description: `Cash Sale ${sale.invoiceNumber ? `#${sale.invoiceNumber}` : ''}`,
-              voucherType: 'Sales Receipt',
-              debit: sale.cashAmount,
-              credit: 0,
-              balance: salesBalance,
-              customer: sale.customerName,
-              reference: sale.invoiceNumber
-            })
-          }
-
-          // Bank/Digital in Credit
-          if (sale.bankAmount > 0) {
-            salesBalance -= sale.bankAmount
-            salesLedger.push({
-              id: `sale-bank-${sale.id}`,
-              date: sale.date,
-              description: `Bank/Digital Payment ${sale.invoiceNumber ? `#${sale.invoiceNumber}` : ''}`,
-              voucherType: 'Bank Payment',
-              debit: 0,
-              credit: sale.bankAmount,
-              balance: salesBalance,
-              customer: sale.customerName,
-              reference: sale.invoiceNumber
-            })
-          }
-        })
-      }
-
-      if (returnsResult.salesReturns > 0) {
-        salesBalance -= returnsResult.salesReturns
-        salesLedger.push({
-          id: 'sales-returns',
-          date: end,
-          description: 'Sales Returns (Refunds)',
-          voucherType: 'Sales Return',
-          debit: 0,
-          credit: returnsResult.salesReturns,
-          balance: salesBalance
-        })
-      }
-
       setPurchaseEntries(purchaseLedger)
-      setSalesEntries(salesLedger.sort(sortByDate))
-      setGeneralEntries(generalLedger)
 
-      // ✅ UPDATED: Calculate Balance Sheet Data (purchases = 0)
+      // Calculate cashbook balance from all sources
+      const totalCashIn = salesResult.cashAmount + returnsResult.purchaseReturns + incomeData.totalAmount
+      const totalCashOut = returnsResult.salesReturns + expensesData.totalAmount + salesResult.bankAmount + purchaseResult.totalAmount
+      const finalBalance = openingBalance + totalCashIn - totalCashOut
+      setCashbookBalance(finalBalance)
+
+      // Calculate Balance Sheet Data
       const bsData: BalanceSheetData = {
-        totalPurchaseAmount: 0,  // ✅ CHANGED: purchases no longer tracked
+        totalPurchaseAmount: purchaseResult.totalAmount,
         totalSalesAmount: salesResult.totalSalesAmount,
         totalPartyPaymentAmount: expensesData.partyPaymentAmount,
         totalOwnExpenseAmount: expensesData.totalAmount - expensesData.partyPaymentAmount,
@@ -519,6 +315,61 @@ export function LedgerClient() {
     }
   }
 
+  const getPurchaseData = async (start: string, end: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("purchases")
+      .select(`
+        id,
+        created_at,
+        product_name,
+        model_number,
+        cost_price,
+        supplier,
+        supplier_id,
+        suppliers(name)
+      `)
+      .gte("created_at", start)
+      .lte("created_at", `${end}T23:59:59.999Z`)
+      .order("created_at", { ascending: true })
+
+    if (error) throw error
+
+    const purchases = data || []
+
+    const individualPurchases = purchases.map(purchase => {
+      // First try to get supplier from the supplier text field
+      // If that's null, try the joined suppliers table
+      const supplierName = purchase.supplier || 
+                          purchase.suppliers?.name || 
+                          'Unknown Supplier'
+      
+      return {
+        id: purchase.id,
+        date: purchase.created_at,
+        invoiceNumber: `PURCH-${purchase.id}`,
+        cashAmount: purchase.cost_price || 0,
+        supplierName: supplierName,
+        productName: purchase.product_name || 'Unknown Product',
+        modelNumber: purchase.model_number || ''
+      }
+    })
+
+    const totalAmount = purchases.reduce((sum, p) => sum + (p.cost_price || 0), 0)
+
+    return {
+      totalAmount,
+      individualPurchases
+    }
+  } catch (error) {
+    console.error("getPurchaseData error:", error)
+    return {
+      totalAmount: 0,
+      individualPurchases: []
+    }
+  }
+}
+
   const getReturnsData = async (start: string, end: string) => {
     try {
       const [salesReturnsResult, purchaseReturnsResult] = await Promise.all([
@@ -569,14 +420,11 @@ export function LedgerClient() {
           const desc = expense.description.trim()
           
           // Try multiple patterns to extract supplier name
-          
-          // Pattern 1: "Payment to [Supplier Name]"
           let match = desc.match(/^Payment to\s+(.+?)(?:\s*-|$)/i)
           if (match) {
             supplierName = match[1].trim()
           }
           
-          // Pattern 2: "Paid to [Supplier Name]"
           if (!supplierName) {
             match = desc.match(/^Paid to\s+(.+?)(?:\s*-|$)/i)
             if (match) {
@@ -584,7 +432,6 @@ export function LedgerClient() {
             }
           }
           
-          // Pattern 3: "[Supplier Name] - Payment" or "[Supplier Name] Payment"
           if (!supplierName) {
             match = desc.match(/^(.+?)(?:\s*-\s*Payment|\s+Payment)/i)
             if (match) {
@@ -592,12 +439,10 @@ export function LedgerClient() {
             }
           }
           
-          // Pattern 4: If description doesn't have keywords, use first substantial part
           if (!supplierName && desc.length > 0) {
-            // Remove common keywords and take first part
             const cleaned = desc
               .replace(/^(payment|paid|pay|to|from|for)\s+/gi, '')
-              .split(/[-–—:,]/)[0] // Split by common delimiters
+              .split(/[-–—:,]/)[0]
               .trim()
             
             if (cleaned.length > 2) {
@@ -605,7 +450,6 @@ export function LedgerClient() {
             }
           }
           
-          // Pattern 5: Last resort - use full description if it's not too long
           if (!supplierName && desc.length <= 50) {
             supplierName = desc
           }
@@ -618,7 +462,7 @@ export function LedgerClient() {
           custom_category: expense.custom_category,
           description: expense.description || 'No description',
           created_at: expense.created_at,
-          supplier: supplierName // Add extracted supplier name
+          supplier: supplierName
         }
       })
 
@@ -627,14 +471,13 @@ export function LedgerClient() {
         .filter(exp => exp.category === 'party_payment')
         .reduce((sum, exp) => sum + exp.amount, 0)
       
-      // Separate supplier payments for Purchase Ledger
       const supplierPayments = individualExpenses.filter(exp => exp.category === 'party_payment')
 
       return { 
         individualExpenses,
         totalAmount,
         partyPaymentAmount,
-        supplierPayments // New: array of supplier payment expenses
+        supplierPayments
       }
     } catch (error) {
       console.error("getExpensesData error:", error)
@@ -647,75 +490,67 @@ export function LedgerClient() {
     }
   }
 
-const getIncomeData = async (start: string, end: string) => {
-  try {
-    const { data, error } = await supabase
-      .from("income_owner")
-      .select(`
-        id, 
-        amount, 
-        income_type, 
-        destination_type, 
-        description, 
-        created_at,
-        supplier_id,
-        suppliers (
-          id,
-          name
-        )
-      `)
-      .gte("date", start)
-      .lte("date", end)
-      .order("created_at", { ascending: true })
+  const getIncomeData = async (start: string, end: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("income_owner")
+        .select(`
+          id, 
+          amount, 
+          income_type, 
+          destination_type, 
+          description, 
+          created_at,
+          supplier_id,
+          suppliers (
+            id,
+            name
+          )
+        `)
+        .gte("date", start)
+        .lte("date", end)
+        .order("created_at", { ascending: true })
 
-    if (error) throw error
+      if (error) throw error
 
-    const individualIncomes = (data || []).map((income: any) => ({
-      id: income.id,
-      amount: income.amount || 0,
-      income_type: income.income_type || 'owner_income',
-      destination_type: income.destination_type || 'cash',
-      description: income.description || '',
-      created_at: income.created_at,
-      supplier_id: income.supplier_id || null,
-      supplier_name: income.suppliers?.name || null
-    }))
+      const individualIncomes = (data || []).map((income: any) => ({
+        id: income.id,
+        amount: income.amount || 0,
+        income_type: income.income_type || 'owner_income',
+        destination_type: income.destination_type || 'cash',
+        description: income.description || '',
+        created_at: income.created_at,
+        supplier_id: income.supplier_id || null,
+        supplier_name: income.suppliers?.name || null
+      }))
 
-    const totalAmount = individualIncomes.reduce((sum, income) => sum + income.amount, 0)
+      const totalAmount = individualIncomes.reduce((sum, income) => sum + income.amount, 0)
 
-    return {
-      individualIncomes,
-      totalAmount
-    }
-  } catch (error) {
-    console.error("getIncomeData error:", error)
-    return {
-      individualIncomes: [],
-      totalAmount: 0
+      return {
+        individualIncomes,
+        totalAmount
+      }
+    } catch (error) {
+      console.error("getIncomeData error:", error)
+      return {
+        individualIncomes: [],
+        totalAmount: 0
+      }
     }
   }
-}
 
-  // ✅ UPDATED: getPreviousBalance - removed purchases, updated calculations
   const getPreviousBalance = async (date: string) => {
     try {
-      const [salesResult, returnsResult, expensesResult, incomeResult] = await Promise.all([
+      const [salesResult, purchaseResult, returnsResult, expensesResult, incomeResult] = await Promise.all([
         getSalesData('2000-01-01', date),
-        // ❌ REMOVED: getPurchaseData('2000-01-01', date)
+        getPurchaseData('2000-01-01', date),
         getReturnsData('2000-01-01', date),
         getExpensesData('2000-01-01', date),
         getIncomeData('2000-01-01', date)
       ])
 
-      // ✅ UPDATED: Total debits (money in) - excluding supplier payments
-      const totalDebits = salesResult.cashAmount + returnsResult.purchaseReturns + 
-                         incomeResult.totalAmount
-      
-      // ✅ UPDATED: Total credits (money out) - including ALL expenses (which includes supplier payments)
-      const totalCredits = returnsResult.salesReturns + 
-                          expensesResult.totalAmount +  // ALL expenses including supplier payments
-                          salesResult.bankAmount
-      // ❌ REMOVED: purchaseResult.totalAmount
+      const totalDebits = salesResult.cashAmount + returnsResult.purchaseReturns + incomeResult.totalAmount
+      const totalCredits = returnsResult.salesReturns + expensesResult.totalAmount + salesResult.bankAmount + purchaseResult.totalAmount
 
       return totalDebits - totalCredits
     } catch (error) {
@@ -755,54 +590,13 @@ const getIncomeData = async (start: string, end: string) => {
     return filtered
   }, [purchaseEntries, searchTerm, selectedSupplierPurchase])
 
-  const filteredSalesEntries = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
-    if (!term) return salesEntries
-    
-    return salesEntries.filter(e => 
-      e.description.toLowerCase().includes(term) ||
-      (e.customer && e.customer.toLowerCase().includes(term)) ||
-      (e.reference && e.reference.toLowerCase().includes(term)) ||
-      e.voucherType.toLowerCase().includes(term)
-    )
-  }, [salesEntries, searchTerm])
-
-  const filteredGeneralEntries = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
-    let filtered = generalEntries
-    
-    // Apply supplier filter
-    if (selectedSupplierGeneral && selectedSupplierGeneral !== "all") {
-      filtered = filtered.filter(e => e.supplier === selectedSupplierGeneral)
-    }
-    
-    // Apply search filter
-    if (term) {
-      filtered = filtered.filter(e => 
-        e.description.toLowerCase().includes(term) ||
-        (e.supplier && e.supplier.toLowerCase().includes(term)) ||
-        (e.customer && e.customer.toLowerCase().includes(term)) ||
-        (e.reference && e.reference.toLowerCase().includes(term)) ||
-        e.voucherType.toLowerCase().includes(term)
-      )
-    }
-    
-    return filtered
-  }, [generalEntries, searchTerm, selectedSupplierGeneral])
-
-  // Calculate totals for P&L
+  // Calculate totals for P&L from expense and income data
   const profitLoss = useMemo(() => {
-    const revenue = generalEntries
-      .filter(e => e.voucherType === 'Sales Receipt' || e.voucherType === 'Income')
-      .reduce((sum, e) => sum + e.debit, 0)
-    
-    const expenses = generalEntries
-      .filter(e => e.voucherType === 'Expense' || e.voucherType === 'Supplier Payment' ||
-                   e.voucherType === 'Sales Return' || e.voucherType === 'Bank Payment')
-      .reduce((sum, e) => sum + e.credit, 0)
+    const revenue = incomeResult.totalAmount + (balanceSheetData?.totalSalesAmount || 0)
+    const expenses = expensesResult.totalAmount + (balanceSheetData?.totalPurchaseAmount || 0)
     
     return { revenue, expenses, net: revenue - expenses }
-  }, [generalEntries])
+  }, [expensesResult, incomeResult, balanceSheetData])
 
   // Helper function to get expense category display
   const getExpenseCategory = (expense: any) => {
@@ -813,14 +607,6 @@ const getIncomeData = async (start: string, end: string) => {
   // Print functions
   const handlePrintPurchaseLedger = () => {
     printLedger('Purchase Ledger', filteredPurchaseEntries, true)
-  }
-
-  const handlePrintSalesLedger = () => {
-    printLedger('Sales Ledger', filteredSalesEntries, true)
-  }
-
-  const handlePrintGeneralLedger = () => {
-    printLedger('General Ledger', filteredGeneralEntries, true)
   }
 
   const handlePrintExpenseVoucher = () => {
@@ -890,7 +676,6 @@ const getIncomeData = async (start: string, end: string) => {
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
-    // ✅ UPDATED: Changed "Party Income" to "Supplier Income"
     const content = `
       <!DOCTYPE html>
       <html>
@@ -995,7 +780,7 @@ const getIncomeData = async (start: string, end: string) => {
         <div class="section">
           <div class="section-title">Expenses</div>
           <div class="row">
-            <span>Total Expenses</span>
+            <span>Total Expenses (Including Purchases)</span>
             <span>৳${profitLoss.expenses.toFixed(2)}</span>
           </div>
           <div class="row total-row">
@@ -1144,7 +929,7 @@ const getIncomeData = async (start: string, end: string) => {
         </table>
 
         <div style="text-align: center; margin-top: 20px; font-weight: bold; font-size: 14px;">
-          Closing Balance (Cash In Hand): ৳${entries.length > 0 ? entries[entries.length - 1].balance.toFixed(2) : '0.00'}
+          Closing Balance: ৳${entries.length > 0 ? entries[entries.length - 1].balance.toFixed(2) : '0.00'}
         </div>
       </body>
       </html>
@@ -1156,7 +941,7 @@ const getIncomeData = async (start: string, end: string) => {
   }
 
   // Export CSV
-  const handleExportCSV = (type: 'purchase' | 'sales' | 'general' | 'expense' | 'income') => {
+  const handleExportCSV = (type: 'purchase' | 'expense' | 'income') => {
     let filename = ''
     let rows: string[] = []
     
@@ -1165,32 +950,6 @@ const getIncomeData = async (start: string, end: string) => {
         case 'purchase':
           filename = 'purchase-ledger'
           rows = filteredPurchaseEntries.map(e => [
-            new Date(e.date).toLocaleDateString(),
-            e.supplier || '-',
-            `"${e.description}"`,
-            e.voucherType,
-            e.debit || 0,
-            e.credit || 0,
-            e.balance.toFixed(2)
-          ].join(','))
-          break
-          
-        case 'sales':
-          filename = 'sales-ledger'
-          rows = filteredSalesEntries.map(e => [
-            new Date(e.date).toLocaleDateString(),
-            e.customer || '-',
-            `"${e.description}"`,
-            e.voucherType,
-            e.debit || 0,
-            e.credit || 0,
-            e.balance.toFixed(2)
-          ].join(','))
-          break
-          
-        case 'general':
-          filename = 'general-ledger'
-          rows = filteredGeneralEntries.map(e => [
             new Date(e.date).toLocaleDateString(),
             e.supplier || '-',
             `"${e.description}"`,
@@ -1215,7 +974,7 @@ const getIncomeData = async (start: string, end: string) => {
           filename = 'income-voucher'
           rows = incomeResult.individualIncomes.map((e: any) => [
             new Date(e.created_at).toLocaleDateString(),
-            e.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income',  // ✅ CHANGED
+            e.income_type === 'owner_income' ? 'Owner Income' : 'Supplier Income',
             e.destination_type === 'bank' ? 'Bank' : 'Cash',
             `"${e.description || '-'}"`,
             e.amount.toFixed(2)
@@ -1228,8 +987,6 @@ const getIncomeData = async (start: string, end: string) => {
         header = 'Date,Category,Description,Amount'
       } else if (type === 'income') {
         header = 'Date,Type,Destination,Description,Amount'
-      } else if (type === 'general') {
-        header = 'Date,Supplier,Description,Voucher Type,Debit,Credit,Balance'
       } else {
         header = 'Date,Party,Description,Voucher Type,Debit,Credit,Balance'
       }
@@ -1436,132 +1193,14 @@ const getIncomeData = async (start: string, end: string) => {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="general-ledger" className="space-y-6">
+      <Tabs defaultValue="purchase-ledger" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="general-ledger">General Ledger</TabsTrigger>
           <TabsTrigger value="purchase-ledger">Purchase Ledger</TabsTrigger>
-          <TabsTrigger value="sales-ledger">Sales Ledger</TabsTrigger>
           <TabsTrigger value="expense-voucher">Expense Voucher</TabsTrigger>
           <TabsTrigger value="income-voucher">Income Voucher</TabsTrigger>
           <TabsTrigger value="profit-loss">Profit & Loss</TabsTrigger>
           <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
         </TabsList>
-
-        {/* General Ledger */}
-        <TabsContent value="general-ledger" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>General Ledger</CardTitle>
-                  <CardDescription>All individual transactions with complete details</CardDescription>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => handleExportCSV('general')}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Export
-                  </Button>
-                  <Button onClick={handlePrintGeneralLedger}>
-                    <Printer className="mr-2 h-4 w-4" />
-                    Print
-                  </Button>
-                </div>
-              </div>
-              {/* Supplier Filter Dropdown */}
-              <div className="mt-4 flex items-center gap-4">
-                <Label htmlFor="supplier-filter-general" className="whitespace-nowrap">Filter by Supplier:</Label>
-                <Select value={selectedSupplierGeneral} onValueChange={setSelectedSupplierGeneral}>
-                  <SelectTrigger id="supplier-filter-general" className="w-64">
-                    <SelectValue placeholder="All Suppliers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Suppliers</SelectItem>
-                    {getUniqueSuppliers(generalEntries).filter(s => s && s.trim() !== '').map(supplier => (
-                      <SelectItem key={supplier} value={supplier}>
-                        {supplier}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedSupplierGeneral !== "all" && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => setSelectedSupplierGeneral("all")}
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Supplier</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Voucher Type</TableHead>
-                    <TableHead className="text-right">Debit (Dr.)</TableHead>
-                    <TableHead className="text-right">Credit (Cr.)</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredGeneralEntries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell>{new Date(entry.date).toLocaleDateString('en-GB')}</TableCell>
-                      <TableCell>{entry.supplier || '—'}</TableCell>
-                      <TableCell className="max-w-md">{entry.description}</TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          entry.voucherType === 'Supplier Payment' ? 'secondary' :
-                          entry.voucherType === 'Sales Receipt' ? 'outline' :
-                          entry.voucherType === 'Income' ? 'outline' :
-                          entry.voucherType === 'Expense' ? 'secondary' :
-                          'outline'
-                        }>
-                          {entry.voucherType}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right text-green-600 font-mono">
-                        {entry.debit > 0 ? formatCurrency(entry.debit) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-red-600 font-mono">
-                        {entry.credit > 0 ? formatCurrency(entry.credit) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-medium font-mono">
-                        {formatCurrency(entry.balance)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-muted font-bold">
-                    <TableCell colSpan={4}>Total</TableCell>
-                    <TableCell className="text-right text-green-600 font-mono">
-                      {formatCurrency(filteredGeneralEntries.reduce((s, e) => s + e.debit, 0))}
-                    </TableCell>
-                    <TableCell className="text-right text-red-600 font-mono">
-                      {formatCurrency(filteredGeneralEntries.reduce((s, e) => s + e.credit, 0))}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {filteredGeneralEntries.length > 0 ? formatCurrency(filteredGeneralEntries[filteredGeneralEntries.length - 1].balance) : formatCurrency(0)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
-                <p className="text-sm font-semibold text-blue-900">
-                  ✓ {selectedSupplierGeneral !== "all" ? `Showing transactions for: ${selectedSupplierGeneral}` : 'Showing all transactions'}
-                </p>
-                <p className="text-xs text-blue-700 mt-1">
-                  {filteredGeneralEntries.length > 0 
-                    ? `Closing Balance: ${formatCurrency(filteredGeneralEntries[filteredGeneralEntries.length - 1].balance)}`
-                    : 'No transactions to display'}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         {/* Purchase Ledger */}
         <TabsContent value="purchase-ledger" className="space-y-4">
@@ -1570,7 +1209,7 @@ const getIncomeData = async (start: string, end: string) => {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Purchase Ledger</CardTitle>
-                  <CardDescription>Supplier payments and returns</CardDescription>
+                  <CardDescription>Purchases, supplier payments, and returns</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => handleExportCSV('purchase')}>
@@ -1631,6 +1270,7 @@ const getIncomeData = async (start: string, end: string) => {
                       <TableCell>{entry.description}</TableCell>
                       <TableCell>
                         <Badge variant={
+                          entry.voucherType === 'Purchase' ? 'default' :
                           entry.voucherType === 'Supplier Payment' ? 'secondary' :
                           'outline'
                         }>
@@ -1669,68 +1309,6 @@ const getIncomeData = async (start: string, end: string) => {
                   </p>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Sales Ledger */}
-        <TabsContent value="sales-ledger" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Sales Ledger</CardTitle>
-                  <CardDescription>All sales transactions with customer and payment details</CardDescription>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => handleExportCSV('sales')}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Export
-                  </Button>
-                  <Button onClick={handlePrintSalesLedger}>
-                    <Printer className="mr-2 h-4 w-4" />
-                    Print
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Voucher Type</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredSalesEntries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell>{new Date(entry.date).toLocaleDateString('en-GB')}</TableCell>
-                      <TableCell>{entry.customer || '—'}</TableCell>
-                      <TableCell className="max-w-md">{entry.description}</TableCell>
-                      <TableCell>
-                        <Badge variant={entry.voucherType === 'Sales Receipt' ? 'outline' : entry.voucherType === 'Bank Payment' ? 'secondary' : 'destructive'}>
-                          {entry.voucherType}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right text-green-600">
-                        {entry.debit > 0 ? formatCurrency(entry.debit) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right text-red-600">
-                        {entry.credit > 0 ? formatCurrency(entry.credit) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(entry.balance)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1907,7 +1485,7 @@ const getIncomeData = async (start: string, end: string) => {
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Expenses</h3>
                   <div className="flex justify-between py-2">
-                    <span>Total Expenses</span>
+                    <span>Total Expenses (Including Purchases)</span>
                     <span className="font-medium">{formatCurrency(profitLoss.expenses)}</span>
                   </div>
                   <div className="border-t pt-2 flex justify-between font-semibold">
