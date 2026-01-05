@@ -45,16 +45,7 @@ const expenseCategories = [
   { value: "land_bill", label: "Land Bill" },
   { value: "bank_charge", label: "Bank Charge" },
   { value: "shopping_bag", label: "Shopping Bag" },
-  { value: "office_supplies", label: "Office Supplies" },
-  { value: "utilities", label: "Utilities" },
-  { value: "rent", label: "Rent" },
-  { value: "transportation", label: "Transportation" },
-  { value: "marketing", label: "Marketing" },
-  { value: "equipment", label: "Equipment" },
-  { value: "maintenance", label: "Maintenance" },
-  { value: "staff_expenses", label: "Staff Expenses" },
-  { value: "professional_services", label: "Professional Services" },
-  { value: "insurance", label: "Insurance" },
+  { value: "entertainment", label: "Entertainment"},
   { value: "other", label: "Other (Custom)" }
 ]
 

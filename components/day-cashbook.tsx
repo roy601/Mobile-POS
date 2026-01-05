@@ -508,8 +508,7 @@ export function DayCashbook() {
           (sum, exp) => sum + exp.amount,
           0
         ) +
-        salesResult.duesAmount +
-        salesResult.bankAmount; // Bank payments reduce cash in hand
+        salesResult.duesAmount; // Bank payments reduce cash in hand
 
       // Cash in hand = Dr - Cr
       const balance = totalDebits - totalCredits;

@@ -327,7 +327,8 @@ export function LedgerClient() {
         cost_price,
         supplier,
         supplier_id,
-        suppliers(name)
+        suppliers(name),
+        color_variants(color, barcode)
       `)
       .gte("created_at", start)
       .lte("created_at", `${end}T23:59:59.999Z`)
@@ -337,25 +338,46 @@ export function LedgerClient() {
 
     const purchases = data || []
 
-    const individualPurchases = purchases.map(purchase => {
-      // First try to get supplier from the supplier text field
-      // If that's null, try the joined suppliers table
+    // Flatten purchases - one entry per color variant
+    const individualPurchases = purchases.flatMap(purchase => {
+      // Get supplier name
       const supplierName = purchase.supplier || 
                           purchase.suppliers?.name || 
                           'Unknown Supplier'
       
-      return {
+      const baseData = {
         id: purchase.id,
         date: purchase.created_at,
-        invoiceNumber: `PURCH-${purchase.id}`,
         cashAmount: purchase.cost_price || 0,
         supplierName: supplierName,
         productName: purchase.product_name || 'Unknown Product',
         modelNumber: purchase.model_number || ''
       }
+
+      // If there are color variants, create one entry per variant
+      const colors = purchase.color_variants || []
+      
+      if (colors.length === 0) {
+        // No color variants - create single entry
+        return [{
+          ...baseData,
+          color: null,
+          barcode: '',
+          invoiceNumber: `PURCH-${purchase.id}`
+        }]
+      }
+
+      // Create one entry per color variant
+      return colors.map((variant, idx) => ({
+        ...baseData,
+        id: `${purchase.id}-${idx}`, // Unique ID for each variant
+        color: variant.color || null,
+        barcode: variant.barcode || '',
+        invoiceNumber: `PURCH-${purchase.id}-${variant.color || 'NA'}`
+      }))
     })
 
-    const totalAmount = purchases.reduce((sum, p) => sum + (p.cost_price || 0), 0)
+    const totalAmount = individualPurchases.reduce((sum, p) => sum + p.cashAmount, 0)
 
     return {
       totalAmount,
@@ -567,33 +589,69 @@ export function LedgerClient() {
     return Array.from(new Set(suppliers)).sort()
   }
 
-  // Filtered entries based on search and supplier selection
-  const filteredPurchaseEntries = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
-    let filtered = purchaseEntries
+// Filtered entries based on search and supplier selection
+const filteredPurchaseEntries = useMemo(() => {
+  const term = searchTerm.trim().toLowerCase()
+  let filtered = purchaseEntries
+  
+  // Apply supplier filter
+  if (selectedSupplierPurchase && selectedSupplierPurchase !== "all") {
+    filtered = filtered.filter(e => e.supplier === selectedSupplierPurchase)
+  }
+  
+  // Apply search filter
+  if (term) {
+    filtered = filtered.filter(e => 
+      e.description.toLowerCase().includes(term) ||
+      (e.supplier && e.supplier.toLowerCase().includes(term)) ||
+      (e.reference && e.reference.toLowerCase().includes(term)) ||
+      e.voucherType.toLowerCase().includes(term)
+    )
+  }
+  
+  // Recalculate balances for filtered entries
+  if (filtered.length > 0) {
+    // When filtering by supplier or search, start balance from 0
+    const isFiltered = (selectedSupplierPurchase && selectedSupplierPurchase !== "all") || term
     
-    // Apply supplier filter
-    if (selectedSupplierPurchase && selectedSupplierPurchase !== "all") {
-      filtered = filtered.filter(e => e.supplier === selectedSupplierPurchase)
+    if (isFiltered) {
+      // Start from 0 for filtered view
+      let runningBalance = 0
+      
+      filtered = filtered.map((entry) => {
+        // Skip opening balance entry when filtering
+        if (entry.id === 'opening') {
+          return {
+            ...entry,
+            balance: 0,
+            debit: 0,
+            credit: 0
+          }
+        }
+        
+        // Calculate new running balance
+        runningBalance = runningBalance + entry.debit - entry.credit
+        return {
+          ...entry,
+          balance: runningBalance
+        }
+      })
+      
+      // Remove opening balance entry if it has no transactions
+      filtered = filtered.filter(e => e.id !== 'opening')
+    } else {
+      // No filter applied - keep original balances
+      // (already calculated correctly in loadLedgerData)
     }
-    
-    // Apply search filter
-    if (term) {
-      filtered = filtered.filter(e => 
-        e.description.toLowerCase().includes(term) ||
-        (e.supplier && e.supplier.toLowerCase().includes(term)) ||
-        (e.reference && e.reference.toLowerCase().includes(term)) ||
-        e.voucherType.toLowerCase().includes(term)
-      )
-    }
-    
-    return filtered
-  }, [purchaseEntries, searchTerm, selectedSupplierPurchase])
+  }
+  
+  return filtered
+}, [purchaseEntries, searchTerm, selectedSupplierPurchase])
 
   // Calculate totals for P&L from expense and income data
   const profitLoss = useMemo(() => {
     const revenue = incomeResult.totalAmount + (balanceSheetData?.totalSalesAmount || 0)
-    const expenses = expensesResult.totalAmount + (balanceSheetData?.totalPurchaseAmount || 0)
+    const expenses = expensesResult.totalAmount
     
     return { revenue, expenses, net: revenue - expenses }
   }, [expensesResult, incomeResult, balanceSheetData])
@@ -1178,18 +1236,6 @@ export function LedgerClient() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Cash In Hand</CardTitle>
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrency(cashbookBalance)}
-            </div>
-            <p className="text-xs text-muted-foreground">= Day Cashbook balance</p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Tabs */}
